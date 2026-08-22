@@ -21,8 +21,9 @@
     Compass,
     WifiOff,
   } from '@lucide/svelte';
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { getAvatarUrl, ICONS8_ICONS } from '../utils/icons8';
+  import Avatar from './Avatar.svelte';
 
   interface Props {
     toggleMembers: () => void;
@@ -163,6 +164,16 @@
     // When messages change, auto-scroll to bottom
     if (currentMessages.length > 0) {
       scrollToBottom();
+    }
+  });
+
+  $effect(() => {
+    const chanId = appState.currentChannelId;
+    const view = appState.currentView;
+    if (chanId && view === 'chat') {
+      untrack(() => {
+        appState.markChannelAsRead(chanId);
+      });
     }
   });
 
@@ -462,14 +473,35 @@
 
           {#if !isSequence}
             <!-- First message in block: Avatar + Header + Body -->
-            <div class="w-10 h-10 rounded-full bg-[#16171a] flex items-center justify-center p-1.5 shrink-0 mt-0.5 select-none shadow cursor-pointer hover:opacity-90 transition-opacity border border-[#232428]/40 overflow-hidden">
-              <img src={getAvatarUrl(message.user?.avatar)} alt="Avatar" class="w-full h-full object-contain" loading="lazy" />
-            </div>
+            <button
+              type="button"
+              onclick={() => {
+                if (message.user?.id && message.user.id !== appState.currentUser.id && message.user.id !== 'user-system') {
+                  appState.openDm(message.user.id);
+                }
+              }}
+              class="shrink-0 mt-0.5 select-none cursor-pointer hover:opacity-90 transition-opacity bg-transparent border-0 p-0 text-left"
+              title={message.user?.id !== appState.currentUser.id ? `Enviar mensagem direta para ${message.user?.displayName}` : ''}
+            >
+              <Avatar
+                name={message.user?.displayName || message.user?.username || 'User'}
+                avatar={message.user?.avatar}
+                userId={message.user?.id}
+                size="lg"
+              />
+            </button>
             <div class="flex-1 overflow-hidden min-w-0">
               <div class="flex items-baseline space-x-2 leading-none mb-1">
-                <span
-                  class="font-semibold text-[15px] hover:underline cursor-pointer flex items-center space-x-1.5"
+                <button
+                  type="button"
+                  onclick={() => {
+                    if (message.user?.id && message.user.id !== appState.currentUser.id && message.user.id !== 'user-system') {
+                      appState.openDm(message.user.id);
+                    }
+                  }}
+                  class="font-semibold text-[15px] hover:underline cursor-pointer flex items-center space-x-1.5 bg-transparent border-0 p-0 text-left"
                   style="color: {roleInfo.color || '#ffffff'}"
+                  title={message.user?.id !== appState.currentUser.id ? `Conversar com ${message.user?.displayName}` : ''}
                 >
                   <span>{message.user?.displayName || message.user?.username || 'User'}</span>
                   {#if message.user?.id === 'user-system'}
@@ -482,7 +514,7 @@
                   {:else if roleInfo.isAdmin}
                     <img src={ICONS8_ICONS.shield.url} class="w-3.5 h-3.5 object-contain" alt="Shield" title="Administrador" />
                   {/if}
-                </span>
+                </button>
                 <span class="text-[11px] text-[#949ba4] font-normal select-none">
                   {formatTime(message.createdAt)}
                 </span>

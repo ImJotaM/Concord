@@ -1,8 +1,14 @@
 <script lang="ts">
   import { appState } from '../stores/appState.svelte';
   import { clientService } from '../api/wsClient';
-  import { Compass, Plus, Wifi, Radio, Server, Globe } from '@lucide/svelte';
-  import { getServerIconUrl } from '../utils/icons8';
+  import { Compass, Plus, Wifi, Radio, Server, Globe, MessageSquare } from '@lucide/svelte';
+  import { getServerAcronym, isCustomImage } from '../utils/avatar';
+  import { soundService } from '../services/soundService.svelte';
+
+  function getServerUnreadCount(serverId: string): number {
+    const channels = appState.channels.filter((c) => c.server_id === serverId);
+    return channels.reduce((sum, c) => sum + (appState.unreadChannels[c.id] || 0), 0);
+  }
 </script>
 
 <nav class="w-[72px] bg-[#0e0f10] flex flex-col items-center py-3 space-y-2 select-none z-20 shrink-0 border-r border-[#1a1b1e]">
@@ -11,20 +17,30 @@
     <!-- Active Pill indicator -->
     <div
       class="absolute left-0 w-1 bg-white rounded-r-full transition-all duration-200"
-      class:h-10={appState.currentServerId === 'home'}
-      class:h-5={appState.currentServerId !== 'home'}
-      class:opacity-0={appState.currentServerId !== 'home'}
-      class:group-hover:opacity-100={appState.currentServerId !== 'home'}
+      class:h-10={appState.currentView === 'dms'}
+      class:h-5={appState.currentView !== 'dms'}
+      class:opacity-0={appState.currentView !== 'dms'}
+      class:group-hover:opacity-100={appState.currentView !== 'dms'}
     ></div>
 
     <button
-      onclick={() => (appState.currentServerId = 'home')}
-      class="w-12 h-12 rounded-[24px] group-hover:rounded-[16px] bg-[#16171a] group-hover:bg-[#5865f2] flex items-center justify-center text-white transition-all duration-200 shadow-md"
-      class:!rounded-[16px]={appState.currentServerId === 'home'}
-      class:!bg-[#5865f2]={appState.currentServerId === 'home'}
-      title="Direct Messages / Home"
+      onclick={() => {
+        soundService.play('button-click');
+        appState.currentView = 'dms';
+      }}
+      class="relative w-12 h-12 rounded-[24px] group-hover:rounded-[16px] bg-[#16171a] group-hover:bg-[#5865f2] flex items-center justify-center text-white transition-all duration-200 shadow-md cursor-pointer"
+      class:!rounded-[16px]={appState.currentView === 'dms'}
+      class:!bg-[#5865f2]={appState.currentView === 'dms'}
+      title="Mensagens Diretas (DMs)"
     >
-      <Radio class="w-7 h-7" />
+      <MessageSquare class="w-6 h-6" />
+
+      <!-- Unread DMs Total Badge -->
+      {#if appState.totalUnreadDms > 0}
+        <span class="absolute -top-1 -right-1 bg-[#f23f43] text-white text-[10px] font-extrabold px-1.5 py-0.2 rounded-full ring-2 ring-[#0e0f10] shadow animate-pulse">
+          {appState.totalUnreadDms > 99 ? '99+' : appState.totalUnreadDms}
+        </span>
+      {/if}
     </button>
   </div>
 
@@ -33,38 +49,55 @@
   <!-- Server List -->
   <div class="flex-1 w-full space-y-2 overflow-y-auto no-scrollbar flex flex-col items-center">
     {#each appState.servers as server (server.id)}
-      {@const isActive = appState.currentServerId === server.id}
+      {@const isActive = appState.currentView === 'chat' && appState.currentServerId === server.id}
+      {@const serverUnread = getServerUnreadCount(server.id)}
+
       <div class="relative group flex items-center justify-center w-full">
         <!-- Active Pill indicator -->
         <div
           class="absolute left-0 w-1 bg-white rounded-r-full transition-all duration-200"
           class:h-10={isActive}
-          class:h-5={!isActive}
-          class:opacity-0={!isActive}
+          class:h-5={!isActive && serverUnread > 0}
+          class:h-2={!isActive && serverUnread === 0}
+          class:opacity-0={!isActive && serverUnread === 0}
           class:group-hover:opacity-100={!isActive}
         ></div>
 
         <button
           onclick={() => {
+            soundService.play('button-click');
+            appState.currentView = 'chat';
             appState.currentServerId = server.id;
             const availableChannels = appState.channels.filter((c) => c.server_id === server.id && c.type === 'text');
             if (availableChannels.length > 0) {
               appState.currentChannelId = availableChannels[0].id;
+              appState.markChannelAsRead(availableChannels[0].id);
               clientService.fetchChannelMessages(availableChannels[0].id);
             }
           }}
-          class="w-12 h-12 rounded-[24px] group-hover:rounded-[16px] bg-[#16171a] group-hover:bg-[#1e1f22] flex items-center justify-center text-white text-lg font-bold transition-all duration-200 shadow-md overflow-hidden p-2.5 cursor-pointer border border-[#232428]/60"
+          class="relative w-12 h-12 rounded-[24px] group-hover:rounded-[16px] bg-[#313338] group-hover:bg-[#5865f2] text-[#dbdee1] group-hover:text-white flex items-center justify-center font-bold text-sm tracking-wider transition-all duration-200 shadow-md overflow-hidden cursor-pointer border border-[#232428]/60 select-none"
           class:!rounded-[16px]={isActive}
-          class:!border-[#5865f2]={isActive}
-          class:!bg-[#1e1f22]={isActive}
+          class:!bg-[#5865f2]={isActive}
+          class:!text-white={isActive}
           title={server.name}
         >
-          <img
-            src={getServerIconUrl(server.icon)}
-            alt={server.name}
-            class="w-full h-full object-contain transition-transform group-hover:scale-110"
-            loading="lazy"
-          />
+          {#if isCustomImage(server.icon)}
+            <img
+              src={server.icon}
+              alt={server.name}
+              class="w-full h-full object-cover rounded-inherit"
+              loading="lazy"
+            />
+          {:else}
+            <span class="font-extrabold text-sm uppercase">{getServerAcronym(server.name)}</span>
+          {/if}
+
+          <!-- Server Unread Badge -->
+          {#if serverUnread > 0 && !isActive}
+            <span class="absolute -top-1 -right-1 bg-[#f23f43] text-white text-[10px] font-extrabold px-1.5 py-0.2 rounded-full ring-2 ring-[#0e0f10] shadow">
+              {serverUnread > 99 ? '99+' : serverUnread}
+            </span>
+          {/if}
         </button>
       </div>
     {/each}
@@ -72,7 +105,10 @@
     <!-- Add Server Button -->
     <div class="relative group flex items-center justify-center w-full">
       <button
-        onclick={() => (appState.activeModal = 'createServer')}
+        onclick={() => {
+          soundService.play('button-click');
+          appState.activeModal = 'createServer';
+        }}
         class="w-12 h-12 rounded-[24px] group-hover:rounded-[16px] bg-[#16171a] hover:!bg-[#23a55a] text-[#23a55a] hover:!text-white flex items-center justify-center transition-all duration-200 shadow-md cursor-pointer"
         title="Add a LAN Server"
       >
@@ -84,6 +120,7 @@
     <div class="relative group flex items-center justify-center w-full">
       <button
         onclick={() => {
+          soundService.play('button-click');
           appState.activeModal = 'discovery';
           clientService.scanLanServers();
         }}
@@ -106,6 +143,7 @@
 
       <button
         onclick={() => {
+          soundService.play('button-click');
           appState.currentView = appState.currentView === 'browser' ? 'chat' : 'browser';
         }}
         class="w-12 h-12 rounded-[24px] group-hover:rounded-[16px] bg-[#16171a] hover:!bg-[#5865f2] text-[#949ba4] hover:!text-white flex items-center justify-center transition-all duration-200 shadow-md cursor-pointer"

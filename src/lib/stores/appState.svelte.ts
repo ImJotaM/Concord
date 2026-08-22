@@ -1,4 +1,38 @@
-import type { User, Server, Channel, Message, DiscoveredServer, AudioSettings, RemoteScreen, VoiceParticipant, BrowserTab, Role, ServerMember } from '../types';
+import type {
+  User,
+  Server,
+  Channel,
+  Message,
+  DiscoveredServer,
+  AudioSettings,
+  ScreenShareSettings,
+  RemoteScreen,
+  VoiceParticipant,
+  BrowserTab,
+  Role,
+  ServerMember,
+  DirectMessage,
+  DirectMessageConversation,
+  InAppNotification,
+  NotificationSettings,
+} from '../types';
+
+function getSavedNotificationSettings(): NotificationSettings {
+  const defaults: NotificationSettings = {
+    enableSounds: true,
+    enableDesktop: true,
+    enableInAppToast: true,
+    notifyAllMessages: true,
+  };
+  if (typeof localStorage === 'undefined') return defaults;
+  const saved = localStorage.getItem('concord_notification_settings');
+  if (saved) {
+    try {
+      return { ...defaults, ...JSON.parse(saved) };
+    } catch {}
+  }
+  return defaults;
+}
 
 function getSavedAudioSettings(): AudioSettings {
   const defaults: AudioSettings = {
@@ -19,6 +53,23 @@ function getSavedAudioSettings(): AudioSettings {
   return defaults;
 }
 
+function getSavedScreenShareSettings(): ScreenShareSettings {
+  const defaults: ScreenShareSettings = {
+    resolution: '1080p',
+    frameRate: 60,
+    qualityMode: 'smooth',
+    includeAudio: true,
+  };
+  if (typeof localStorage === 'undefined') return defaults;
+  const saved = localStorage.getItem('concord_screenshare_settings');
+  if (saved) {
+    try {
+      return { ...defaults, ...JSON.parse(saved) };
+    } catch {}
+  }
+  return defaults;
+}
+
 // Generate or retrieve persistent local user identity
 function getOrCreateUser(): User {
   const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('concord_user') : null;
@@ -28,15 +79,13 @@ function getOrCreateUser(): User {
     } catch {}
   }
   const id = 'user-' + Math.random().toString(36).substring(2, 9);
-  const avatars = ['😎', '🦊', '🐱', '🚀', '⚡', '🎮', '👾', '🔥', '🛡️'];
-  const randomAvatar = avatars[Math.floor(Math.random() * avatars.length)];
   const randomNum = Math.floor(1000 + Math.random() * 9000);
   
   const user: User = {
     id,
     username: `User${randomNum}`,
     displayName: `LAN Gamer #${randomNum}`,
-    avatar: randomAvatar,
+    avatar: '',
     status: 'online',
     customStatus: 'Chilling on LAN',
   };
@@ -78,6 +127,14 @@ class AppState {
   typingUsers = $state<Record<string, string[]>>({});
 
   audioSettings = $state<AudioSettings>(getSavedAudioSettings());
+  screenShareSettings = $state<ScreenShareSettings>(getSavedScreenShareSettings());
+
+  updateScreenShareSettings(newSettings: Partial<ScreenShareSettings>) {
+    Object.assign(this.screenShareSettings, newSettings);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('concord_screenshare_settings', JSON.stringify(this.screenShareSettings));
+    }
+  }
   
   // Voice & Screen state
   voiceState = $state<{
@@ -87,9 +144,11 @@ class AppState {
     isSpeaking: boolean;
     isScreenSharing: boolean;
     autoplayBlocked: boolean;
+    watchingScreenId: string | null;
     localScreenStream: MediaStream | null;
     remoteScreenStreams: Record<string, RemoteScreen>;
     remoteAudioStreams: Record<string, MediaStream>;
+    remoteScreenAudioStreams: Record<string, MediaStream>;
     userVolumes: Record<string, number>;
     roomParticipants: Record<string, VoiceParticipant[]>;
   }>({
@@ -99,19 +158,118 @@ class AppState {
     isSpeaking: false,
     isScreenSharing: false,
     autoplayBlocked: false,
+    watchingScreenId: null,
     localScreenStream: null,
     remoteScreenStreams: {},
     remoteAudioStreams: {},
+    remoteScreenAudioStreams: {},
     userVolumes: {},
     roomParticipants: {},
   });
 
+  watchScreen(screenId: string) {
+    this.voiceState.watchingScreenId = screenId;
+  }
+
+  stopWatchingScreen() {
+    this.voiceState.watchingScreenId = null;
+  }
+
+  isWatchingScreen(peerOrUserId?: string): boolean {
+    if (!this.voiceState.watchingScreenId || !peerOrUserId) return false;
+    if (this.voiceState.watchingScreenId === peerOrUserId) return true;
+    const byPeer = this.voiceState.remoteScreenStreams[this.voiceState.watchingScreenId];
+    if (byPeer && byPeer.userId === peerOrUserId) return true;
+    const byUser = Object.values(this.voiceState.remoteScreenStreams).find(
+      (s) => s.userId === peerOrUserId || s.peerId === peerOrUserId
+    );
+    if (byUser && byUser.peerId === this.voiceState.watchingScreenId) return true;
+    return false;
+  }
+
+  // Notification settings
+  notificationSettings = $state<NotificationSettings>(getSavedNotificationSettings());
+
+  updateNotificationSettings(newSettings: Partial<NotificationSettings>) {
+    Object.assign(this.notificationSettings, newSettings);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('concord_notification_settings', JSON.stringify(this.notificationSettings));
+    }
+  }
+
+  // Direct Messages (DMs) state
+  activeDmUserId = $state<string | null>(null);
+  dmConversations = $state<Record<string, DirectMessageConversation>>({});
+  dmMessages = $state<Record<string, Message[]>>({});
+  typingDmUsers = $state<Record<string, boolean>>({});
+  unreadDms = $state<Record<string, number>>({});
+  unreadChannels = $state<Record<string, number>>({});
+  inAppNotifications = $state<InAppNotification[]>([]);
+
+  // Total unread DMs count derived
+  totalUnreadDms = $derived(
+    Object.values(this.unreadDms).reduce((sum, count) => sum + count, 0)
+  );
+
+  openDm(userId: string) {
+    this.currentView = 'dms';
+    this.activeDmUserId = userId;
+    this.unreadDms[userId] = 0;
+    // If conversation doesn't exist locally, create a placeholder
+    if (!this.dmConversations[userId]) {
+      const user = this.users.find((u) => u.id === userId);
+      if (user) {
+        this.dmConversations[userId] = {
+          id: `dm_${[this.currentUser.id, userId].sort().join('_')}`,
+          userId,
+          user,
+          unreadCount: 0,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+    }
+  }
+
+  openFriends() {
+    this.currentView = 'dms';
+    this.activeDmUserId = null;
+  }
+
+  markDmAsRead(userId: string) {
+    if (this.unreadDms[userId]) {
+      this.unreadDms[userId] = 0;
+    }
+    if (this.dmConversations[userId] && this.dmConversations[userId].unreadCount > 0) {
+      this.dmConversations[userId].unreadCount = 0;
+    }
+    if (this.inAppNotifications.some((n) => n.userId === userId || n.senderUserId === userId)) {
+      this.inAppNotifications = this.inAppNotifications.filter(
+        (n) => n.userId !== userId && n.senderUserId !== userId
+      );
+    }
+  }
+
+  markChannelAsRead(channelId: string) {
+    if (this.unreadChannels[channelId]) {
+      this.unreadChannels[channelId] = 0;
+    }
+    if (this.inAppNotifications.some((n) => n.channelId === channelId)) {
+      this.inAppNotifications = this.inAppNotifications.filter(
+        (n) => n.channelId !== channelId
+      );
+    }
+  }
+
+  dismissNotification(id: string) {
+    this.inAppNotifications = this.inAppNotifications.filter((n) => n.id !== id);
+  }
+
   discoveredServers = $state<DiscoveredServer[]>([]);
-  activeModal = $state<'discovery' | 'createChannel' | 'createServer' | 'settings' | 'hostServer' | 'micPermission' | 'serverRoles' | null>(null);
+  activeModal = $state<'discovery' | 'createChannel' | 'createServer' | 'settings' | 'hostServer' | 'micPermission' | 'serverRoles' | 'soundboard' | null>(null);
   pendingVoiceChannelId = $state<string | null>(null);
 
-  // Main view state: 'chat' | 'browser'
-  currentView = $state<'chat' | 'browser'>('chat');
+  // Main view state: 'chat' | 'browser' | 'dms'
+  currentView = $state<'chat' | 'browser' | 'dms'>('chat');
 
   // In-App Browser Tabs State
   browserTabs = $state<BrowserTab[]>([
@@ -120,6 +278,8 @@ class AppState {
       title: 'Google',
       url: 'https://www.google.com/webhp?igu=1',
       favicon: '🔍',
+      history: ['https://www.google.com/webhp?igu=1'],
+      historyIndex: 0,
     },
   ]);
   activeBrowserTabId = $state<string>('tab-google');
@@ -142,6 +302,8 @@ class AppState {
         title: title || 'Nova Página',
         url,
         favicon: '🌐',
+        history: [url],
+        historyIndex: 0,
       });
       this.activeBrowserTabId = newId;
     }
@@ -155,6 +317,8 @@ class AppState {
       title,
       url,
       favicon: url.includes('google') ? '🔍' : '🌐',
+      history: [url],
+      historyIndex: 0,
     });
     this.activeBrowserTabId = newId;
     this.currentView = 'browser';

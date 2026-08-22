@@ -44,7 +44,13 @@
     if (!trimmed) return 'https://www.google.com/webhp?igu=1';
 
     // 1. YouTube specific handler
-    if (trimmed === 'youtube' || trimmed === 'youtube.com' || trimmed === 'https://youtube.com' || trimmed === 'https://www.youtube.com' || trimmed === 'www.youtube.com') {
+    if (
+      trimmed === 'youtube' ||
+      trimmed === 'youtube.com' ||
+      trimmed === 'https://youtube.com' ||
+      trimmed === 'https://www.youtube.com' ||
+      trimmed === 'www.youtube.com'
+    ) {
       return 'youtube://home';
     }
 
@@ -61,28 +67,43 @@
 
     // 2. Wikipedia handler (use mobile wikipedia for smooth iframe rendering)
     if (trimmed.includes('wikipedia.org')) {
-      if (!trimmed.includes('.m.wikipedia.org')) {
-        return trimmed.replace('wikipedia.org', 'm.wikipedia.org');
+      let wikiUrl = trimmed;
+      if (!wikiUrl.startsWith('http://') && !wikiUrl.startsWith('https://')) {
+        wikiUrl = `https://${wikiUrl}`;
       }
-      return trimmed.startsWith('http') ? trimmed : `https://${trimmed}`;
+      if (!wikiUrl.includes('.m.wikipedia.org')) {
+        wikiUrl = wikiUrl.replace('wikipedia.org', 'm.wikipedia.org');
+      }
+      return wikiUrl;
     }
 
-    // 3. Regular URL check
-    if (/^(https?:\/\/|[a-zA-Z0-9-]+\.[a-zA-Z]{2,})(\/.*)?$/i.test(trimmed)) {
-      if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
-        let full = `https://${trimmed}`;
-        if (full.includes('google.') && !full.includes('igu=1')) {
-          full += (full.includes('?') ? '&' : '?') + 'igu=1';
-        }
-        return full;
+    // 3. Explicit Protocols: http://, https://, file://, etc.
+    if (/^[a-zA-Z]+:\/\//i.test(trimmed)) {
+      let full = trimmed;
+      if (full.includes('google.') && !full.includes('igu=1')) {
+        full += (full.includes('?') ? '&' : '?') + 'igu=1';
       }
-      if (trimmed.includes('google.') && !trimmed.includes('igu=1')) {
-        return trimmed + (trimmed.includes('?') ? '&' : '?') + 'igu=1';
-      }
-      return trimmed;
+      return full;
     }
 
-    // 4. Otherwise, treat as search query
+    // 4. Localhost or Local IP patterns (e.g., localhost:3000, 192.168.1.1, 127.0.0.1:8080)
+    const isLocalOrIp = /^(localhost|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?(\/.*)?$/i.test(trimmed);
+    if (isLocalOrIp) {
+      return `http://${trimmed}`;
+    }
+
+    // 5. Domain patterns without protocol (e.g., "google.com", "www.github.com", "devdocs.io", "globo.com/esportes")
+    // Check that there are NO spaces and it has a valid domain structure with TLD
+    const isDomainUrl = !/\s/.test(trimmed) && /^(www\.|[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(:\d+)?(\/.*)?$/i.test(trimmed);
+    if (isDomainUrl) {
+      let full = `https://${trimmed}`;
+      if (full.includes('google.') && !full.includes('igu=1')) {
+        full += (full.includes('?') ? '&' : '?') + 'igu=1';
+      }
+      return full;
+    }
+
+    // 6. Otherwise, treat as Search Query
     const encoded = encodeURIComponent(trimmed);
     switch (selectedEngine) {
       case 'duckduckgo':
@@ -121,14 +142,51 @@
     return `/api/proxy?url=${encodeURIComponent(url)}`;
   }
 
+  let canGoBack = $derived((activeTab?.historyIndex ?? 0) > 0);
+  let canGoForward = $derived(
+    activeTab?.history !== undefined && (activeTab.historyIndex ?? 0) < activeTab.history.length - 1
+  );
+
+  function goBack() {
+    if (!activeTab || !activeTab.history || (activeTab.historyIndex ?? 0) <= 0) return;
+    const newIdx = (activeTab.historyIndex ?? 0) - 1;
+    const targetUrl = activeTab.history[newIdx];
+    activeTab.historyIndex = newIdx;
+    activeTab.url = targetUrl;
+    activeTab.title = formatTitleFromUrl(targetUrl);
+    activeTab.favicon = targetUrl.includes('youtube') ? '🎬' : targetUrl.includes('google') ? '🔍' : '🌐';
+    urlInput = targetUrl === 'youtube://home' ? 'https://www.youtube.com' : targetUrl;
+    isLoading = true;
+  }
+
+  function goForward() {
+    if (!activeTab || !activeTab.history || (activeTab.historyIndex ?? 0) >= activeTab.history.length - 1) return;
+    const newIdx = (activeTab.historyIndex ?? 0) + 1;
+    const targetUrl = activeTab.history[newIdx];
+    activeTab.historyIndex = newIdx;
+    activeTab.url = targetUrl;
+    activeTab.title = formatTitleFromUrl(targetUrl);
+    activeTab.favicon = targetUrl.includes('youtube') ? '🎬' : targetUrl.includes('google') ? '🔍' : '🌐';
+    urlInput = targetUrl === 'youtube://home' ? 'https://www.youtube.com' : targetUrl;
+    isLoading = true;
+  }
+
   function navigateTo(url: string, title?: string) {
     const finalUrl = sanitizeOrSearch(url);
     urlInput = finalUrl === 'youtube://home' ? 'https://www.youtube.com' : finalUrl;
     if (activeTab) {
+      const history = activeTab.history ? [...activeTab.history] : [activeTab.url];
+      const historyIndex = activeTab.historyIndex ?? 0;
+      // Truncate any forward history and append new URL
+      const newHistory = history.slice(0, historyIndex + 1);
+      newHistory.push(finalUrl);
+
       appState.updateBrowserTab(activeTab.id, {
         url: finalUrl,
         title: title || formatTitleFromUrl(finalUrl),
         favicon: finalUrl.includes('youtube') ? '🎬' : finalUrl.includes('google') ? '🔍' : '🌐',
+        history: newHistory,
+        historyIndex: newHistory.length - 1,
       });
     }
     isLoading = true;
@@ -258,16 +316,18 @@
     <!-- Back & Forward & Reload & Home -->
     <div class="flex items-center space-x-1 text-[#949ba4]">
       <button
-        onclick={() => history.back()}
-        class="p-1.5 rounded-lg hover:bg-[#35373c] hover:text-white transition-colors cursor-pointer"
+        onclick={goBack}
+        disabled={!canGoBack}
+        class="p-1.5 rounded-lg hover:bg-[#35373c] hover:text-white transition-colors cursor-pointer disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-[#949ba4] disabled:cursor-not-allowed"
         title="Voltar"
       >
         <ArrowLeft class="w-4 h-4" />
       </button>
 
       <button
-        onclick={() => history.forward()}
-        class="p-1.5 rounded-lg hover:bg-[#35373c] hover:text-white transition-colors cursor-pointer"
+        onclick={goForward}
+        disabled={!canGoForward}
+        class="p-1.5 rounded-lg hover:bg-[#35373c] hover:text-white transition-colors cursor-pointer disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-[#949ba4] disabled:cursor-not-allowed"
         title="Avançar"
       >
         <ArrowRight class="w-4 h-4" />

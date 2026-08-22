@@ -11,6 +11,8 @@ export interface ConnectedClient {
   status: 'online' | 'idle' | 'dnd' | 'offline';
   customStatus?: string;
   currentVoiceChannelId?: string;
+  isMuted?: boolean;
+  isDeafened?: boolean;
   ws: WebSocket;
 }
 
@@ -58,6 +60,18 @@ export class WebSocketHandler {
         this.handleSendMessage(ws, payload);
         break;
 
+      case 'send_dm':
+        this.handleSendDm(ws, payload);
+        break;
+
+      case 'get_dm_history':
+        this.handleGetDmHistory(ws, payload);
+        break;
+
+      case 'typing_dm':
+        this.handleTypingDm(ws, payload);
+        break;
+
       case 'typing':
         this.handleTyping(ws, payload);
         break;
@@ -97,6 +111,14 @@ export class WebSocketHandler {
 
       case 'voice_audio_chunk':
         this.handleVoiceAudioChunk(ws, payload);
+        break;
+
+      case 'voice_state_update':
+        this.handleVoiceStateUpdate(ws, payload);
+        break;
+
+      case 'soundboard_play':
+        this.handleSoundboardPlay(ws, payload);
         break;
 
       // Moderation & Roles
@@ -211,7 +233,7 @@ export class WebSocketHandler {
     }));
 
     // Voice participants map
-    const activeVoiceMembers: Record<string, { peerId: string; userId: string; username: string; displayName: string; avatar: string }[]> = {};
+    const activeVoiceMembers: Record<string, { peerId: string; userId: string; username: string; displayName: string; avatar: string; isMuted?: boolean; isDeafened?: boolean }[]> = {};
     for (const [chanId, clientIds] of this.voiceRooms.entries()) {
       const roomClients = Array.from(this.clients.values()).filter((c) => clientIds.has(c.id));
       activeVoiceMembers[chanId] = roomClients.map((c) => ({
@@ -220,7 +242,52 @@ export class WebSocketHandler {
         username: c.username,
         displayName: c.displayName,
         avatar: c.avatar,
+        isMuted: c.isMuted ?? false,
+        isDeafened: c.isDeafened ?? false,
       }));
+    }
+
+    // Fetch user's recent DM conversations
+    let dmConversations: any[] = [];
+    try {
+      const recentDms = db.prepare(`
+        SELECT dm.channel_id, dm.sender_id, dm.recipient_id, dm.content, dm.created_at,
+               CASE WHEN dm.sender_id = ? THEN dm.recipient_id ELSE dm.sender_id END as other_user_id
+        FROM direct_messages dm
+        WHERE dm.sender_id = ? OR dm.recipient_id = ?
+        ORDER BY dm.created_at DESC
+      `).all(user.id, user.id, user.id);
+
+      const dmConversationsMap = new Map<string, any>();
+      for (const row of recentDms as any[]) {
+        if (!dmConversationsMap.has(row.other_user_id)) {
+          const otherUser: any = allUsers.find((u: any) => u.id === row.other_user_id);
+          if (otherUser) {
+            dmConversationsMap.set(row.other_user_id, {
+              id: row.channel_id,
+              userId: otherUser.id,
+              user: {
+                id: otherUser.id,
+                username: otherUser.username,
+                displayName: otherUser.display_name,
+                avatar: otherUser.avatar || '👤',
+                status: onlineUserIds.has(otherUser.id) ? 'online' : 'offline',
+                customStatus: otherUser.custom_status,
+              },
+              lastMessage: {
+                content: row.content,
+                createdAt: row.created_at,
+                senderId: row.sender_id,
+              },
+              unreadCount: 0,
+              updatedAt: row.created_at,
+            });
+          }
+        }
+      }
+      dmConversations = Array.from(dmConversationsMap.values());
+    } catch (e) {
+      console.warn('Error fetching dmConversations:', e);
     }
 
     this.send(ws, 'init_sync', {
@@ -239,6 +306,7 @@ export class WebSocketHandler {
       serverMembers: allMembers,
       users: usersWithPresence,
       voiceRooms: activeVoiceMembers,
+      dmConversations,
     });
 
     // Broadcast user joined / online to all other clients
@@ -289,6 +357,101 @@ export class WebSocketHandler {
 
     // Broadcast new message to all clients
     this.broadcast('new_message', messageObj);
+  }
+
+  private handleSendDm(ws: WebSocket, payload: { recipientId: string; content: string; attachments?: string[] }) {
+    const client = this.clients.get(ws);
+    if (!client || !payload.recipientId) return;
+
+    const channelId = `dm_${[client.userId, payload.recipientId].sort().join('_')}`;
+    const messageId = `dm-msg-${uuidv4()}`;
+    const attachmentsJson = payload.attachments ? JSON.stringify(payload.attachments) : null;
+    const createdAt = new Date().toISOString();
+
+    db.prepare(`
+      INSERT INTO direct_messages (id, channel_id, sender_id, recipient_id, content, attachments, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(messageId, channelId, client.userId, payload.recipientId, payload.content, attachmentsJson, createdAt);
+
+    const messageObj = {
+      id: messageId,
+      channelId,
+      senderId: client.userId,
+      recipientId: payload.recipientId,
+      userId: client.userId,
+      user: {
+        id: client.userId,
+        username: client.username,
+        displayName: client.displayName,
+        avatar: client.avatar,
+      },
+      content: payload.content,
+      attachments: payload.attachments || [],
+      createdAt,
+    };
+
+    // Send to sender
+    this.send(ws, 'new_dm', messageObj);
+
+    // Send to all active sockets of the recipient
+    for (const [targetWs, targetClient] of this.clients.entries()) {
+      if (targetClient.userId === payload.recipientId && targetWs !== ws) {
+        this.send(targetWs, 'new_dm', messageObj);
+      }
+    }
+  }
+
+  private handleGetDmHistory(ws: WebSocket, payload: { recipientId: string }) {
+    const client = this.clients.get(ws);
+    if (!client || !payload.recipientId) return;
+
+    const channelId = `dm_${[client.userId, payload.recipientId].sort().join('_')}`;
+    const rawMessages = db.prepare(`
+      SELECT dm.*, u.username, u.display_name, u.avatar
+      FROM direct_messages dm
+      JOIN users u ON dm.sender_id = u.id
+      WHERE dm.channel_id = ?
+      ORDER BY dm.created_at ASC
+      LIMIT 150
+    `).all(channelId);
+
+    const messages = rawMessages.map((m: any) => ({
+      id: m.id,
+      channelId: m.channel_id,
+      senderId: m.sender_id,
+      recipientId: m.recipient_id,
+      userId: m.sender_id,
+      user: {
+        id: m.sender_id,
+        username: m.username,
+        displayName: m.display_name,
+        avatar: m.avatar || '👤',
+      },
+      content: m.content,
+      attachments: m.attachments ? JSON.parse(m.attachments) : [],
+      createdAt: m.created_at,
+    }));
+
+    this.send(ws, 'dm_history', {
+      recipientId: payload.recipientId,
+      channelId,
+      messages,
+    });
+  }
+
+  private handleTypingDm(ws: WebSocket, payload: { recipientId: string; isTyping: boolean }) {
+    const client = this.clients.get(ws);
+    if (!client || !payload.recipientId) return;
+
+    for (const [targetWs, targetClient] of this.clients.entries()) {
+      if (targetClient.userId === payload.recipientId && targetWs !== ws) {
+        this.send(targetWs, 'user_typing_dm', {
+          senderId: client.userId,
+          displayName: client.displayName,
+          isTyping: payload.isTyping,
+        });
+      }
+    }
   }
 
   private handleTyping(ws: WebSocket, payload: { channelId: string; isTyping: boolean }) {
@@ -449,7 +612,7 @@ export class WebSocketHandler {
     }
 
     const room = this.voiceRooms.get(channelId)!;
-    const existingPeers: { peerId: string; userId: string; displayName: string; avatar: string }[] = [];
+    const existingPeers: { peerId: string; userId: string; displayName: string; avatar: string; isMuted?: boolean; isDeafened?: boolean }[] = [];
 
     // Gather existing peers in room
     for (const peerClientId of room) {
@@ -460,6 +623,8 @@ export class WebSocketHandler {
           userId: peer.userId,
           displayName: peer.displayName,
           avatar: peer.avatar,
+          isMuted: peer.isMuted ?? false,
+          isDeafened: peer.isDeafened ?? false,
         });
 
         // Notify existing peer that a new peer joined
@@ -468,6 +633,8 @@ export class WebSocketHandler {
           userId: client.userId,
           displayName: client.displayName,
           avatar: client.avatar,
+          isMuted: client.isMuted ?? false,
+          isDeafened: client.isDeafened ?? false,
           channelId,
         });
       }
@@ -595,6 +762,58 @@ export class WebSocketHandler {
     }
   }
 
+  private handleVoiceStateUpdate(ws: WebSocket, payload: { isMuted?: boolean; isDeafened?: boolean }) {
+    const client = this.clients.get(ws);
+    if (!client || !client.currentVoiceChannelId) return;
+
+    if (payload.isMuted !== undefined) client.isMuted = payload.isMuted;
+    if (payload.isDeafened !== undefined) client.isDeafened = payload.isDeafened;
+
+    const channelId = client.currentVoiceChannelId;
+    const room = this.voiceRooms.get(channelId);
+    if (!room) return;
+
+    for (const peerClientId of room) {
+      const peer = Array.from(this.clients.values()).find((c) => c.id === peerClientId);
+      if (peer && peer.ws.readyState === WebSocket.OPEN) {
+        this.send(peer.ws, 'voice_peer_state_update', {
+          peerId: client.id,
+          userId: client.userId,
+          channelId,
+          isMuted: client.isMuted ?? false,
+          isDeafened: client.isDeafened ?? false,
+        });
+      }
+    }
+
+    this.broadcastVoiceRoomUpdate(channelId);
+  }
+
+  private handleSoundboardPlay(ws: WebSocket, payload: { channelId: string; soundId: string; soundName: string }) {
+    const client = this.clients.get(ws);
+    if (!client) return;
+
+    const channelId = payload.channelId || client.currentVoiceChannelId;
+    if (!channelId) return;
+
+    const room = this.voiceRooms.get(channelId);
+    if (room) {
+      for (const peerClientId of room) {
+        if (peerClientId === client.id) continue;
+        const peer = Array.from(this.clients.values()).find((c) => c.id === peerClientId);
+        if (peer && peer.ws.readyState === WebSocket.OPEN) {
+          this.send(peer.ws, 'voice_soundboard_play', {
+            channelId,
+            soundId: payload.soundId,
+            soundName: payload.soundName,
+            userId: client.userId,
+            displayName: client.displayName,
+          });
+        }
+      }
+    }
+  }
+
   private handleDisconnect(ws: WebSocket) {
     const client = this.clients.get(ws);
     if (!client) return;
@@ -622,7 +841,17 @@ export class WebSocketHandler {
       ? Array.from(room)
           .map((cid) => {
             const c = Array.from(this.clients.values()).find((cl) => cl.id === cid);
-            return c ? { peerId: c.id, userId: c.userId, username: c.username, displayName: c.displayName, avatar: c.avatar } : null;
+            return c
+              ? {
+                  peerId: c.id,
+                  userId: c.userId,
+                  username: c.username,
+                  displayName: c.displayName,
+                  avatar: c.avatar,
+                  isMuted: c.isMuted ?? false,
+                  isDeafened: c.isDeafened ?? false,
+                }
+              : null;
           })
           .filter(Boolean)
       : [];

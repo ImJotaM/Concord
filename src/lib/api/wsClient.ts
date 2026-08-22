@@ -1,5 +1,7 @@
 import { appState } from '../stores/appState.svelte';
 import { WebRtcVoiceEngine } from '../webrtc/voiceEngine';
+import { soundService } from '../services/soundService.svelte';
+import { notificationService } from '../services/notificationService.svelte';
 import type { Message } from '../types';
 
 class ClientService {
@@ -27,6 +29,8 @@ class ClientService {
     );
   }
 
+  private fallbackAttempts = 0;
+
   connect(serverUrl?: string) {
     if (serverUrl) {
       appState.setServerUrl(serverUrl);
@@ -42,13 +46,19 @@ class ClientService {
     appState.connectionStatus = 'connecting';
 
     try {
-      const httpUrl = new URL(appState.serverUrl);
-      const wsProtocol = httpUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+      let target = appState.serverUrl || 'http://localhost:3000';
+      if (!target.startsWith('http://') && !target.startsWith('https://')) {
+        target = `http://${target}`;
+      }
+      const httpUrl = new URL(target);
+      const wsProtocol = (httpUrl.protocol === 'https:' || httpUrl.protocol === 'wss:') ? 'wss:' : 'ws:';
       const wsUrl = `${wsProtocol}//${httpUrl.host}`;
 
+      console.log('🔌 Connecting to WebSocket at:', wsUrl);
       this.ws = new WebSocket(wsUrl);
 
       this.ws.onopen = () => {
+        this.fallbackAttempts = 0;
         appState.connectionStatus = 'connected';
         console.log('⚡ Connected to Concord LAN server at', wsUrl);
 
@@ -92,10 +102,23 @@ class ClientService {
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = setTimeout(() => {
       if (appState.connectionStatus !== 'connected') {
-        console.log('Attempting to reconnect to Concord LAN server...');
+        this.fallbackAttempts++;
+        console.log(`Attempting to reconnect to Concord LAN server (attempt #${this.fallbackAttempts})...`);
+        // If failed multiple times on custom saved URL, try fallback to current hostname:3000 or localhost:3000
+        if (this.fallbackAttempts >= 2 && typeof window !== 'undefined') {
+          const localHostUrl = 'http://localhost:3000';
+          const networkHostUrl = window.location.hostname ? `http://${window.location.hostname}:3000` : localHostUrl;
+          if (appState.serverUrl !== networkHostUrl) {
+            console.log('🔄 Attempting fallback to:', networkHostUrl);
+            appState.setServerUrl(networkHostUrl);
+          } else if (appState.serverUrl !== localHostUrl) {
+            console.log('🔄 Attempting fallback to:', localHostUrl);
+            appState.setServerUrl(localHostUrl);
+          }
+        }
         this.connect();
       }
-    }, 3000);
+    }, 2500);
   }
 
   private handleServerMessage(type: string, payload: any) {
@@ -110,6 +133,12 @@ class ClientService {
         appState.roles = payload.roles || [];
         appState.serverMembers = payload.serverMembers || [];
         appState.voiceState.roomParticipants = payload.voiceRooms || {};
+
+        if (payload.dmConversations && Array.isArray(payload.dmConversations)) {
+          payload.dmConversations.forEach((conv: any) => {
+            appState.dmConversations[conv.userId] = conv;
+          });
+        }
 
         if (appState.servers.length > 0 && !appState.servers.some((s) => s.id === appState.currentServerId)) {
           appState.currentServerId = appState.servers[0].id;
@@ -130,6 +159,91 @@ class ClientService {
 
       case 'new_message': {
         appState.addMessage(payload);
+        const isFromOther = payload.userId !== appState.currentUser.id && payload.user?.id !== appState.currentUser.id;
+        if (isFromOther) {
+          const isCurrentActiveChannel = appState.currentView === 'chat' && appState.currentChannelId === payload.channelId && !document.hidden;
+          if (!isCurrentActiveChannel) {
+            appState.unreadChannels[payload.channelId] = (appState.unreadChannels[payload.channelId] || 0) + 1;
+            const chan = appState.channels.find((c) => c.id === payload.channelId);
+            const srv = chan ? appState.servers.find((s) => s.id === chan.server_id) : null;
+            notificationService.notify({
+              senderName: payload.user?.displayName || payload.user?.username || 'Membro',
+              senderAvatar: payload.user?.avatar,
+              senderUserId: payload.userId || payload.user?.id,
+              locationType: 'channel',
+              channelId: payload.channelId,
+              channelName: chan?.name || 'chat',
+              serverId: chan?.server_id,
+              serverName: srv?.name || 'Servidor',
+              body: payload.content,
+            });
+          } else {
+            soundService.play('message-received');
+          }
+        }
+        break;
+      }
+
+      case 'new_dm': {
+        const otherUserId = payload.senderId === appState.currentUser.id ? payload.recipientId : payload.senderId;
+        if (!appState.dmMessages[otherUserId]) {
+          appState.dmMessages[otherUserId] = [];
+        }
+        // Avoid duplicates
+        if (!appState.dmMessages[otherUserId].some((m) => m.id === payload.id)) {
+          appState.dmMessages[otherUserId].push(payload);
+        }
+
+        // Update DM Conversation entry
+        const otherUser = appState.users.find((u) => u.id === otherUserId) || payload.user;
+        const isSender = payload.senderId === appState.currentUser.id;
+        const isCurrentlyInThisDm = appState.currentView === 'dms' && appState.activeDmUserId === otherUserId && !document.hidden;
+
+        if (!isSender && !isCurrentlyInThisDm) {
+          appState.unreadDms[otherUserId] = (appState.unreadDms[otherUserId] || 0) + 1;
+        }
+
+        appState.dmConversations[otherUserId] = {
+          id: payload.channelId,
+          userId: otherUserId,
+          user: otherUser,
+          lastMessage: {
+            content: payload.content,
+            createdAt: payload.createdAt,
+            senderId: payload.senderId,
+          },
+          unreadCount: appState.unreadDms[otherUserId] || 0,
+          updatedAt: payload.createdAt,
+        };
+
+        if (!isSender) {
+          if (!isCurrentlyInThisDm) {
+            notificationService.notify({
+              senderName: payload.user?.displayName || payload.user?.username || 'Amigo',
+              senderAvatar: payload.user?.avatar,
+              senderUserId: otherUserId,
+              locationType: 'dm',
+              isDm: true,
+              body: payload.content,
+            });
+          } else {
+            soundService.play('message-received');
+          }
+        }
+        break;
+      }
+
+      case 'dm_history': {
+        if (payload.recipientId && payload.messages) {
+          appState.dmMessages[payload.recipientId] = payload.messages;
+        }
+        break;
+      }
+
+      case 'user_typing_dm': {
+        if (payload.senderId) {
+          appState.typingDmUsers[payload.senderId] = payload.isTyping;
+        }
         break;
       }
 
@@ -158,6 +272,7 @@ class ClientService {
       case 'channel_created': {
         if (!appState.channels.some((c) => c.id === payload.id)) {
           appState.channels.push(payload);
+          soundService.play('success');
         }
         break;
       }
@@ -165,6 +280,7 @@ class ClientService {
       case 'server_created': {
         if (!appState.servers.some((s) => s.id === payload.server.id)) {
           appState.servers.push(payload.server);
+          soundService.play('success');
           if (payload.channels) {
             payload.channels.forEach((c: any) => {
               if (!appState.channels.some((ch) => ch.id === c.id)) {
@@ -197,6 +313,7 @@ class ClientService {
 
       // WebRTC Voice Events
       case 'voice_joined': {
+        soundService.play('join-channel');
         appState.voiceState.activeChannelId = payload.channelId;
         if (payload.myPeerId && this.voiceEngine) {
           this.voiceEngine.setMyPeerId(payload.myPeerId);
@@ -211,6 +328,7 @@ class ClientService {
       }
 
       case 'voice_left': {
+        soundService.play('leave-channel');
         appState.voiceState.activeChannelId = null;
         if (this.voiceEngine) {
           this.voiceEngine.cleanup();
@@ -219,12 +337,19 @@ class ClientService {
         break;
       }
 
+      case 'voice_soundboard_play': {
+        soundService.playSoundboard(payload.soundId);
+        break;
+      }
+
       case 'voice_peer_joined': {
+        soundService.play('join-channel');
         console.log('Peer joined voice channel:', payload.displayName);
         break;
       }
 
       case 'voice_peer_left': {
+        soundService.play('leave-channel');
         if (this.voiceEngine) {
           this.voiceEngine.removePeer(payload.peerId);
         }
@@ -264,10 +389,24 @@ class ClientService {
         break;
       }
 
+      case 'voice_peer_state_update': {
+        for (const chanId in appState.voiceState.roomParticipants) {
+          const list = appState.voiceState.roomParticipants[chanId];
+          const participant = list.find((p) => p.userId === payload.userId || p.peerId === payload.peerId);
+          if (participant) {
+            participant.isMuted = payload.isMuted;
+            participant.isDeafened = payload.isDeafened;
+          }
+        }
+        break;
+      }
+
       case 'voice_peer_audio_chunk': {
-        if (this.voiceEngine) {
-          const userVol = this.getUserVolume(payload.userId);
-          this.voiceEngine.playRemoteAudioChunk(payload.userId, payload.chunk, userVol);
+        if (this.voiceEngine && payload.userId !== appState.currentUser.id) {
+          if (!this.voiceEngine.hasActiveWebRtcAudio(payload.userId)) {
+            const userVol = this.getUserVolume(payload.userId);
+            this.voiceEngine.playRemoteAudioChunk(payload.userId, payload.chunk, userVol);
+          }
         }
         break;
       }
@@ -408,8 +547,24 @@ class ClientService {
     });
   }
 
+  sendDm(recipientId: string, content: string, attachments?: string[]) {
+    this.send('send_dm', {
+      recipientId,
+      content,
+      attachments,
+    });
+  }
+
+  fetchDmHistory(recipientId: string) {
+    this.send('get_dm_history', { recipientId });
+  }
+
   sendTyping(channelId: string, isTyping: boolean) {
     this.send('typing', { channelId, isTyping });
+  }
+
+  sendTypingDm(recipientId: string, isTyping: boolean) {
+    this.send('typing_dm', { recipientId, isTyping });
   }
 
   createChannel(serverId: string, name: string, type: 'text' | 'voice', topic?: string) {
@@ -436,6 +591,7 @@ class ClientService {
   }
 
   leaveVoiceChannel() {
+    soundService.play('leave-channel');
     this.send('voice_leave', {});
     if (this.voiceEngine) {
       this.voiceEngine.cleanup();
@@ -447,17 +603,60 @@ class ClientService {
   toggleMute() {
     const next = !appState.voiceState.isMuted;
     appState.voiceState.isMuted = next;
+    soundService.play(next ? 'mute' : 'unmute');
     if (this.voiceEngine) {
       this.voiceEngine.setMute(next);
     }
+
+    // Update local state in room participants list
+    if (appState.voiceState.activeChannelId && appState.voiceState.roomParticipants[appState.voiceState.activeChannelId]) {
+      const p = appState.voiceState.roomParticipants[appState.voiceState.activeChannelId].find((x) => x.userId === appState.currentUser.id);
+      if (p) {
+        p.isMuted = next;
+      }
+    }
+
+    this.send('voice_state_update', {
+      isMuted: next,
+      isDeafened: appState.voiceState.isDeafened,
+    });
   }
 
   toggleDeafen() {
     const next = !appState.voiceState.isDeafened;
     appState.voiceState.isDeafened = next;
-    if (this.voiceEngine) {
-      this.voiceEngine.setDeafen(next);
+
+    if (next) {
+      // Deafening muts BOTH incoming audio and outgoing microphone
+      appState.voiceState.isMuted = true;
+      if (this.voiceEngine) {
+        this.voiceEngine.setDeafen(true);
+        this.voiceEngine.setMute(true);
+      }
+    } else {
+      // Undeafening restores both incoming audio and outgoing mic
+      appState.voiceState.isMuted = false;
+      if (this.voiceEngine) {
+        this.voiceEngine.setDeafen(false);
+        this.voiceEngine.setMute(false);
+      }
     }
+
+    soundService.play(next ? 'deafen' : 'undeafen');
+
+    // Update local state in room participants list
+    if (appState.voiceState.activeChannelId && appState.voiceState.roomParticipants[appState.voiceState.activeChannelId]) {
+      const p = appState.voiceState.roomParticipants[appState.voiceState.activeChannelId].find((x) => x.userId === appState.currentUser.id);
+      if (p) {
+        p.isDeafened = next;
+        p.isMuted = appState.voiceState.isMuted;
+      }
+    }
+
+    this.send('voice_state_update', {
+      isMuted: appState.voiceState.isMuted,
+      isDeafened: next,
+    });
   }
 
   async startScreenShare() {
@@ -465,6 +664,7 @@ class ClientService {
       try {
         await this.voiceEngine.startScreenShare();
         appState.voiceState.isScreenSharing = true;
+        soundService.play('screen-share-start');
         this.send('voice_screen_share', { isSharing: true });
       } catch (e) {
         console.error('Failed to start screen share:', e);
@@ -476,8 +676,13 @@ class ClientService {
     if (this.voiceEngine) {
       await this.voiceEngine.stopScreenShare();
       appState.voiceState.isScreenSharing = false;
+      soundService.play('screen-share-stop');
       this.send('voice_screen_share', { isSharing: false });
     }
+  }
+
+  broadcastSoundboard(channelId: string, soundId: string, soundName: string) {
+    this.send('soundboard_play', { channelId, soundId, soundName });
   }
 
   toggleScreenShare() {
@@ -517,21 +722,29 @@ class ClientService {
   }
 
   async switchMicrophone(deviceId: string) {
+    appState.audioSettings.inputDeviceId = deviceId;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('concord_audio_settings', JSON.stringify(appState.audioSettings));
+    }
     if (this.voiceEngine) {
-      this.voiceEngine.cleanup();
-      await this.joinVoiceChannel(appState.voiceState.activeChannelId!, false, deviceId);
+      await this.voiceEngine.switchMicrophone(deviceId);
     }
   }
 
   async setAudioOutput(deviceId: string) {
-    // Handled directly via HTMLAudioElement.setSinkId on user audio elements
     appState.audioSettings.outputDeviceId = deviceId;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('concord_audio_settings', JSON.stringify(appState.audioSettings));
+    }
   }
 
   updateAudioSettings(settings: Partial<typeof appState.audioSettings>) {
     appState.audioSettings = { ...appState.audioSettings, ...settings };
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem('concord_audio_settings', JSON.stringify(appState.audioSettings));
+    }
+    if (this.voiceEngine) {
+      this.voiceEngine.applyAudioSettings(settings);
     }
   }
 

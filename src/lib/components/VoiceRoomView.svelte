@@ -17,8 +17,11 @@
     Settings,
     Users,
     Signal,
+    Eye,
+    EyeOff,
   } from '@lucide/svelte';
   import { getAvatarUrl } from '../utils/icons8';
+  import Avatar from './Avatar.svelte';
 
   interface Props {
     channelId: string;
@@ -35,47 +38,9 @@
   let localScreenStream = $derived(appState.voiceState.localScreenStream);
   let isLocalSharing = $derived(appState.voiceState.isScreenSharing);
 
-  // Active spotlight screen or participant
-  let selectedScreenId = $state<string | null>(null);
+  // Fullscreen state
   let isFullScreen = $state(false);
   let stageContainer: HTMLDivElement | null = $state(null);
-
-  function attachAudio(node: HTMLAudioElement, params: { stream?: MediaStream | null; volume: number }) {
-    let { stream, volume } = params;
-
-    function apply(s?: MediaStream | null, v?: number) {
-      if (s && node.srcObject !== s) {
-        node.srcObject = s;
-      }
-      if (v !== undefined) {
-        node.volume = Math.min(Math.max(v / 100, 0), 1);
-      }
-      if (s) {
-        const playPromise = node.play();
-        if (playPromise !== undefined) {
-          playPromise.catch((err) => {
-            console.warn('[WebRTC-Debug] ⚠️ Autoplay blocked on remote audio:', err);
-            if (err.name === 'NotAllowedError') {
-              appState.voiceState.autoplayBlocked = true;
-            }
-          });
-        }
-      }
-    }
-
-    apply(stream, volume);
-
-    return {
-      update(newParams: { stream?: MediaStream | null; volume: number }) {
-        stream = newParams.stream;
-        volume = newParams.volume;
-        apply(stream, volume);
-      },
-      destroy() {
-        node.srcObject = null;
-      },
-    };
-  }
 
   function unlockAudioAll() {
     appState.voiceState.autoplayBlocked = false;
@@ -84,9 +49,21 @@
     });
   }
 
+  function stopWatching() {
+    appState.stopWatchingScreen();
+  }
+
+  function watchScreen(screenId: string) {
+    appState.watchScreen(screenId);
+  }
+
   // Determine current active stream for main spotlight stage
   let activeSpotlight = $derived.by(() => {
-    if (selectedScreenId === 'local' && localScreenStream) {
+    const screenId = appState.voiceState.watchingScreenId;
+    if (!screenId) {
+      return null;
+    }
+    if (screenId === 'local' && localScreenStream) {
       return {
         id: 'local',
         title: `${appState.currentUser.displayName} (Sua Tela)`,
@@ -94,8 +71,8 @@
         isLocal: true,
       };
     }
-    if (selectedScreenId && appState.voiceState.remoteScreenStreams[selectedScreenId]) {
-      const rs = appState.voiceState.remoteScreenStreams[selectedScreenId];
+    if (appState.voiceState.remoteScreenStreams[screenId]) {
+      const rs = appState.voiceState.remoteScreenStreams[screenId];
       return {
         id: rs.peerId,
         title: `${rs.displayName} (Tela Compartilhada)`,
@@ -103,21 +80,15 @@
         isLocal: false,
       };
     }
-    if (remoteScreensList.length > 0) {
-      const first = remoteScreensList[0];
+    const byUser = Object.values(appState.voiceState.remoteScreenStreams).find(
+      (s) => s.userId === screenId || s.peerId === screenId
+    );
+    if (byUser) {
       return {
-        id: first.peerId,
-        title: `${first.displayName} (Tela Compartilhada)`,
-        stream: first.stream,
+        id: byUser.peerId,
+        title: `${byUser.displayName} (Tela Compartilhada)`,
+        stream: byUser.stream,
         isLocal: false,
-      };
-    }
-    if (isLocalSharing && localScreenStream) {
-      return {
-        id: 'local',
-        title: `${appState.currentUser.displayName} (Sua Tela)`,
-        stream: localScreenStream,
-        isLocal: true,
       };
     }
     return null;
@@ -238,14 +209,14 @@
             use:attachStream={activeSpotlight.stream}
             autoplay
             playsinline
-            muted={activeSpotlight.isLocal}
+            muted={true}
             class="w-full h-full object-contain"
           >
             <track kind="captions" />
           </video>
 
           <!-- Stage Top Floating Controls -->
-          <div class="absolute top-0 inset-x-0 p-4 bg-gradient-to-b from-black/80 via-black/40 to-transparent flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity">
+          <div class="absolute top-0 inset-x-0 p-4 bg-gradient-to-b from-black/80 via-black/40 to-transparent flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity z-20">
             <div class="flex items-center space-x-2.5">
               <span class="inline-flex items-center gap-1.5 rounded-md bg-[#f23f43] px-2.5 py-1 text-xs font-bold text-white shadow-md">
                 <Tv class="w-3.5 h-3.5" />
@@ -254,17 +225,29 @@
               <span class="text-sm font-bold text-white drop-shadow-md">{activeSpotlight.title}</span>
             </div>
 
-            <button
-              onclick={toggleFullScreen}
-              class="p-2 rounded-xl bg-black/60 hover:bg-black/90 text-white transition-all cursor-pointer backdrop-blur shadow"
-              title="Tela Cheia"
-            >
-              {#if isFullScreen}
-                <Minimize2 class="w-4 h-4" />
-              {:else}
-                <Maximize2 class="w-4 h-4" />
-              {/if}
-            </button>
+            <div class="flex items-center space-x-2">
+              <!-- Stop Watching Button -->
+              <button
+                onclick={stopWatching}
+                class="px-3 py-1.5 rounded-xl bg-black/60 hover:bg-[#f23f43] text-white text-xs font-bold transition-all cursor-pointer backdrop-blur shadow flex items-center space-x-1.5 border border-white/10"
+                title="Parar de Assistir Transmissão e Voltar para a Grade"
+              >
+                <EyeOff class="w-4 h-4" />
+                <span>Parar de Assistir</span>
+              </button>
+
+              <button
+                onclick={toggleFullScreen}
+                class="p-2 rounded-xl bg-black/60 hover:bg-black/90 text-white transition-all cursor-pointer backdrop-blur shadow"
+                title="Tela Cheia"
+              >
+                {#if isFullScreen}
+                  <Minimize2 class="w-4 h-4" />
+                {:else}
+                  <Maximize2 class="w-4 h-4" />
+                {/if}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -274,19 +257,24 @@
             {@const isLocal = p.userId === appState.currentUser.id}
             {@const isSpeaking = isLocal ? appState.voiceState.isSpeaking : p.isSpeaking}
             {@const hasScreen = isLocal ? isLocalSharing : !!remoteScreensList.find((s) => s.userId === p.userId || (p.peerId && s.peerId === p.peerId))}
-            {@const isSelected = selectedScreenId === (isLocal ? 'local' : (p.peerId || p.userId))}
+            {@const isSelected = appState.isWatchingScreen(isLocal ? 'local' : (p.peerId || p.userId))}
             {@const remoteStream = !isLocal ? ((p.peerId && appState.voiceState.remoteAudioStreams[p.peerId]) || appState.voiceState.remoteAudioStreams[p.userId] || null) : null}
             {@const userVol = clientService.getUserVolume(p.userId)}
-
-            {#if !isLocal}
-              <audio use:attachAudio={{ stream: remoteStream, volume: userVol }} autoplay playsinline class="hidden"></audio>
-            {/if}
+            {@const isPeerMuted = isLocal ? appState.voiceState.isMuted : p.isMuted}
+            {@const isPeerDeafened = isLocal ? appState.voiceState.isDeafened : p.isDeafened}
 
             <button
               type="button"
               onclick={() => {
                 if (hasScreen) {
-                  selectedScreenId = isLocal ? 'local' : (remoteScreensList.find((s) => s.userId === p.userId || (p.peerId && s.peerId === p.peerId))?.peerId || null);
+                  const targetId = isLocal ? 'local' : (remoteScreensList.find((s) => s.userId === p.userId || (p.peerId && s.peerId === p.peerId))?.peerId || null);
+                  if (targetId) {
+                    if (isSelected) {
+                      stopWatching();
+                    } else {
+                      watchScreen(targetId);
+                    }
+                  }
                 }
               }}
               class="bg-[#2b2d31] hover:bg-[#35373c] px-3.5 py-2.5 rounded-2xl flex items-center space-x-3 border-2 transition-all cursor-pointer text-left shadow-md"
@@ -294,15 +282,29 @@
               class:border-[#5865f2]={isSelected}
               class:border-transparent={!isSpeaking && !isSelected}
             >
-              <div class="w-10 h-10 rounded-full bg-[#16171a] flex items-center justify-center p-1 ring-2 ring-transparent transition-all border border-[#232428]/40 overflow-hidden" class:ring-[#23a55a]={isSpeaking}>
-                <img src={getAvatarUrl(p.avatar)} alt={p.displayName} class="w-full h-full object-contain" />
-              </div>
+              <Avatar
+                name={p.displayName}
+                avatar={p.avatar}
+                userId={p.userId}
+                size="md"
+                {isSpeaking}
+              />
               <div class="truncate max-w-[130px]">
                 <div class="text-xs font-bold text-white truncate">{p.displayName} {isLocal ? '(Você)' : ''}</div>
                 {#if hasScreen}
                   <div class="text-[10px] text-[#f23f43] font-bold flex items-center space-x-1">
                     <Monitor class="w-3 h-3" />
                     <span>Transmitindo</span>
+                  </div>
+                {:else if isPeerDeafened}
+                  <div class="text-[10px] text-[#f23f43] font-semibold flex items-center space-x-1">
+                    <VolumeX class="w-3 h-3" />
+                    <span>Áudio Desativado</span>
+                  </div>
+                {:else if isPeerMuted}
+                  <div class="text-[10px] text-[#f23f43] font-semibold flex items-center space-x-1">
+                    <MicOff class="w-3 h-3" />
+                    <span>Mutado</span>
                   </div>
                 {:else}
                   <div class="text-[10px] text-[#949ba4] truncate">{isSpeaking ? 'Falando...' : 'Conectado'}</div>
@@ -318,12 +320,11 @@
         {#each participants as p (p.userId)}
           {@const isLocal = p.userId === appState.currentUser.id}
           {@const isSpeaking = isLocal ? appState.voiceState.isSpeaking : p.isSpeaking}
+          {@const hasScreen = isLocal ? isLocalSharing : !!remoteScreensList.find((s) => s.userId === p.userId || (p.peerId && s.peerId === p.peerId))}
           {@const remoteStream = !isLocal ? ((p.peerId && appState.voiceState.remoteAudioStreams[p.peerId]) || appState.voiceState.remoteAudioStreams[p.userId] || null) : null}
           {@const userVol = clientService.getUserVolume(p.userId)}
-
-          {#if !isLocal}
-            <audio use:attachAudio={{ stream: remoteStream, volume: userVol }} autoplay playsinline class="hidden"></audio>
-          {/if}
+          {@const isPeerMuted = isLocal ? appState.voiceState.isMuted : p.isMuted}
+          {@const isPeerDeafened = isLocal ? appState.voiceState.isDeafened : p.isDeafened}
 
           <!-- Participant Discord Tile with proportional 16:9 responsive sizing -->
           <div
@@ -336,6 +337,16 @@
             <!-- Background Ambient Glow when speaking -->
             {#if isSpeaking}
               <div class="absolute inset-0 bg-[#23a55a]/5 pointer-events-none transition-opacity"></div>
+            {/if}
+
+            <!-- Live Streaming Red Badge on Top Left -->
+            {#if hasScreen}
+              <div class="absolute top-2.5 left-2.5 z-20">
+                <span class="inline-flex items-center gap-1.5 rounded-md bg-[#f23f43] px-2 py-0.5 text-[10px] font-bold text-white shadow-md">
+                  <span class="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
+                  <span>AO VIVO</span>
+                </span>
+              </div>
             {/if}
 
             <!-- Discrete Volume Slider at TOP-RIGHT on Hover for Remote Users (never collides with bottom badge) -->
@@ -367,14 +378,39 @@
             <!-- Center Large Responsive Avatar -->
             <div class="relative flex flex-col items-center justify-center z-10 my-auto">
               <div
-                class="w-16 h-16 sm:w-20 sm:h-20 md:w-24 md:h-24 rounded-full bg-[#111214] flex items-center justify-center p-3 sm:p-4 shadow-2xl ring-4 transition-all duration-150 select-none border border-[#232428] overflow-hidden"
+                class="rounded-full shadow-2xl ring-4 transition-all duration-150 select-none overflow-hidden"
                 class:ring-[#23a55a]={isSpeaking}
                 class:ring-[#1e1f22]={!isSpeaking}
                 class:scale-105={isSpeaking}
               >
-                <img src={getAvatarUrl(p.avatar)} alt={p.displayName} class="w-full h-full object-contain" />
+                <Avatar
+                  name={p.displayName}
+                  avatar={p.avatar}
+                  userId={p.userId}
+                  size="2xl"
+                />
               </div>
             </div>
+
+            <!-- Overlay on Hover for Streaming Participants: "Assistir Transmissão" -->
+            {#if hasScreen}
+              {@const targetScreenId = isLocal ? 'local' : (remoteScreensList.find((s) => s.userId === p.userId || (p.peerId && s.peerId === p.peerId))?.peerId || p.userId)}
+              <div class="absolute inset-0 bg-black/75 backdrop-blur-[2px] opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center space-y-2.5 z-30 p-4">
+                <div class="text-xs font-bold text-white flex items-center space-x-1.5">
+                  <Tv class="w-4 h-4 text-[#f23f43]" />
+                  <span>{isLocal ? 'Sua Transmissão' : `Transmissão de ${p.displayName}`}</span>
+                </div>
+
+                <button
+                  type="button"
+                  onclick={() => watchScreen(targetScreenId)}
+                  class="bg-[#5865f2] hover:bg-[#4752c4] text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg hover:shadow-[#5865f2]/40 active:scale-95 flex items-center space-x-2 cursor-pointer"
+                >
+                  <Eye class="w-4 h-4" />
+                  <span>Assistir Transmissão</span>
+                </button>
+              </div>
+            {/if}
 
             <!-- Bottom Left Name Badge Overlay (Discord Style) -->
             <div class="absolute bottom-2.5 left-2.5 bg-[#111214]/85 backdrop-blur-md px-2.5 py-1.5 rounded-lg flex items-center space-x-1.5 border border-black/40 shadow-md z-20 max-w-[calc(100%-1.25rem)]">
@@ -385,8 +421,10 @@
                 {/if}
               </span>
 
-              {#if isLocal && appState.voiceState.isMuted}
-                <MicOff class="w-3.5 h-3.5 text-[#f23f43] shrink-0" />
+              {#if isPeerDeafened}
+                <VolumeX class="w-3.5 h-3.5 text-[#f23f43] shrink-0" title="Áudio Desativado" />
+              {:else if isPeerMuted}
+                <MicOff class="w-3.5 h-3.5 text-[#f23f43] shrink-0" title="Microfone Mutado" />
               {:else if isSpeaking}
                 <span class="w-2 h-2 rounded-full bg-[#23a55a] shrink-0 animate-pulse"></span>
               {/if}
@@ -420,7 +458,11 @@
           class="w-12 h-12 rounded-full flex items-center justify-center transition-all text-white shadow-lg cursor-pointer active:scale-95 {appState.voiceState.isDeafened ? 'bg-[#f23f43] hover:bg-[#da373c]' : 'bg-[#313338] hover:bg-[#3b3e45]'}"
           title={appState.voiceState.isDeafened ? 'Ativar Áudio' : 'Desativar Áudio'}
         >
-          <Headphones class="w-5 h-5" />
+          {#if appState.voiceState.isDeafened}
+            <VolumeX class="w-5 h-5" />
+          {:else}
+            <Headphones class="w-5 h-5" />
+          {/if}
         </button>
 
         <!-- Screen Share Button -->
@@ -434,6 +476,37 @@
           {:else}
             <Monitor class="w-5 h-5" />
           {/if}
+        </button>
+
+        <!-- Watch / Hide Live Stream Quick Toggle (when streams exist in room) -->
+        {#if remoteScreensList.length > 0 || isLocalSharing}
+          {@const firstScreenId = isLocalSharing ? 'local' : (remoteScreensList[0]?.peerId || 'local')}
+          <button
+            onclick={() => {
+              if (activeSpotlight) {
+                stopWatching();
+              } else {
+                watchScreen(firstScreenId);
+              }
+            }}
+            class="w-12 h-12 rounded-full flex items-center justify-center transition-all text-white shadow-lg cursor-pointer active:scale-95 {activeSpotlight ? 'bg-[#5865f2] hover:bg-[#4752c4]' : 'bg-[#313338] hover:bg-[#3b3e45]'}"
+            title={activeSpotlight ? 'Parar de Assistir Transmissão' : 'Assistir Transmissão ao Vivo'}
+          >
+            {#if activeSpotlight}
+              <EyeOff class="w-5 h-5" />
+            {:else}
+              <Eye class="w-5 h-5 text-[#23a55a]" />
+            {/if}
+          </button>
+        {/if}
+
+        <!-- Soundboard Button -->
+        <button
+          onclick={() => (appState.activeModal = 'soundboard')}
+          class="w-12 h-12 rounded-full bg-[#5865f2] hover:bg-[#4752c4] flex items-center justify-center transition-all text-white shadow-lg shadow-[#5865f2]/20 cursor-pointer active:scale-95 group relative"
+          title="Abrir Soundboard (Tocar Sons na Chamada)"
+        >
+          <Radio class="w-5 h-5 group-hover:animate-pulse" />
         </button>
 
         <!-- Settings Modal Button -->

@@ -8,6 +8,7 @@
     Mic,
     MicOff,
     Headphones,
+    VolumeX,
     Settings,
     PhoneOff,
     ChevronDown,
@@ -16,7 +17,9 @@
     Trash2,
     Shield,
   } from '@lucide/svelte';
-  import { getAvatarUrl } from '../utils/icons8';
+  import { AVATAR_OPTIONS, getAvatarUrl } from '../utils/icons8';
+  import { soundService } from '../services/soundService.svelte';
+  import Avatar from './Avatar.svelte';
 
   const statusColors: Record<string, string> = {
     online: 'bg-[#23a55a]',
@@ -164,32 +167,50 @@
       <div class="space-y-[2px]">
         {#each appState.currentTextChannels as channel (channel.id)}
           {@const isActive = appState.currentView === 'chat' && appState.currentChannelId === channel.id}
+          {@const unreadCount = appState.unreadChannels[channel.id] || 0}
           <div
             role="button"
             tabindex="0"
             onclick={() => {
+              soundService.play('button-click');
               appState.currentView = 'chat';
               appState.currentChannelId = channel.id;
+              appState.markChannelAsRead(channel.id);
               clientService.fetchChannelMessages(channel.id);
             }}
             onkeydown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
+                soundService.play('button-click');
                 appState.currentView = 'chat';
                 appState.currentChannelId = channel.id;
+                appState.markChannelAsRead(channel.id);
                 clientService.fetchChannelMessages(channel.id);
               }
             }}
-            class="w-full flex items-center justify-between px-2 py-1.5 rounded-[4px] text-sm font-medium transition-colors group cursor-pointer"
+            class="w-full flex items-center justify-between px-2 py-1.5 rounded-[4px] text-sm font-medium transition-colors group cursor-pointer relative"
             class:bg-[#1e1f22]={isActive}
-            class:text-white={isActive}
-            class:text-[#949ba4]={!isActive}
+            class:text-white={isActive || unreadCount > 0}
+            class:font-bold={unreadCount > 0}
+            class:text-[#949ba4]={!isActive && unreadCount === 0}
             class:hover:bg-[#16171a]={!isActive}
-            class:hover:text-[#dbdee1]={!isActive}
+            class:hover:text-[#dbdee1]={!isActive && unreadCount === 0}
           >
+            <!-- Discord Unread White Pill Indicator on the left -->
+            {#if unreadCount > 0 && !isActive}
+              <div class="absolute -left-2 top-1/2 -translate-y-1/2 w-1 h-2 bg-white rounded-r-full"></div>
+            {/if}
+
             <div class="flex items-center truncate flex-1 min-w-0">
-              <Hash class={`w-4 h-4 mr-1.5 shrink-0 ${isActive ? 'text-white' : 'text-[#80848e] group-hover:text-[#dbdee1]'}`} />
+              <Hash class={`w-4 h-4 mr-1.5 shrink-0 ${isActive || unreadCount > 0 ? 'text-white' : 'text-[#80848e] group-hover:text-[#dbdee1]'}`} />
               <span class="truncate">{channel.name}</span>
             </div>
+
+            <!-- Unread Badge on the right -->
+            {#if unreadCount > 0 && !isActive}
+              <span class="bg-[#f23f43] text-white text-[10px] font-extrabold px-1.5 py-0.2 rounded-full shadow shrink-0 mr-1">
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </span>
+            {/if}
 
             {#if appState.canManageChannels}
               <button
@@ -295,13 +316,16 @@
                 {#each participants as participant (participant.userId)}
                   {@const isLocal = participant.userId === appState.currentUser.id}
                   {@const isSpeaking = isLocal ? appState.voiceState.isSpeaking : participant.isSpeaking}
+                  {@const isPeerMuted = isLocal ? appState.voiceState.isMuted : participant.isMuted}
+                  {@const isPeerDeafened = isLocal ? appState.voiceState.isDeafened : participant.isDeafened}
                   <div class="flex items-center space-x-2 py-1 px-1.5 rounded hover:bg-[#16171a] transition-colors">
-                    <div
-                      class="w-6 h-6 rounded-full bg-[#0e0f10] flex items-center justify-center p-0.5 ring-2 ring-transparent transition-all shrink-0 border border-[#232428]/40 overflow-hidden"
-                      class:!ring-[#23a55a]={isSpeaking}
-                    >
-                      <img src={getAvatarUrl(participant.avatar)} alt={participant.displayName} class="w-full h-full object-contain" />
-                    </div>
+                    <Avatar
+                      name={participant.displayName}
+                      avatar={participant.avatar}
+                      userId={participant.userId}
+                      size="sm"
+                      {isSpeaking}
+                    />
                     <span
                       class="text-xs font-medium truncate flex-1 min-w-0"
                       class:text-[#23a55a]={isSpeaking}
@@ -314,8 +338,10 @@
                         AO VIVO
                       </span>
                     {/if}
-                    {#if isLocal && appState.voiceState.isMuted}
-                      <MicOff class="w-3.5 h-3.5 text-[#f23f43] shrink-0" />
+                    {#if isPeerDeafened}
+                      <VolumeX class="w-3.5 h-3.5 text-[#f23f43] shrink-0" title="Áudio Desativado" />
+                    {:else if isPeerMuted}
+                      <MicOff class="w-3.5 h-3.5 text-[#f23f43] shrink-0" title="Microfone Mutado" />
                     {/if}
                   </div>
                 {/each}
@@ -331,16 +357,26 @@
   {#if appState.voiceState.activeChannelId}
     {@const connectedChannel = appState.channels.find((c) => c.id === appState.voiceState.activeChannelId)}
     <div class="bg-[#0e0f10] border-b border-[#1a1b1e] p-2 flex items-center justify-between">
-      <div class="flex items-center space-x-2 truncate">
-        <div class="w-2.5 h-2.5 rounded-full bg-[#23a55a] animate-pulse"></div>
+      <button
+        type="button"
+        onclick={() => {
+          if (appState.voiceState.activeChannelId) {
+            appState.currentView = 'chat';
+            appState.currentChannelId = appState.voiceState.activeChannelId;
+          }
+        }}
+        class="flex items-center space-x-2 truncate hover:opacity-85 transition-opacity text-left flex-1 cursor-pointer"
+        title="Voltar para a chamada de voz"
+      >
+        <div class="w-2.5 h-2.5 rounded-full bg-[#23a55a] animate-pulse shrink-0"></div>
         <div class="truncate">
           <div class="text-xs font-bold text-[#23a55a] flex items-center space-x-1">
             <span>Voz Conectada</span>
             <span class="text-[10px] text-[#949ba4] font-normal">(LAN &lt;5ms)</span>
           </div>
-          <div class="text-xs text-[#949ba4] truncate">{connectedChannel?.name || 'Sala de Voz'}</div>
+          <div class="text-xs text-[#949ba4] hover:text-white transition-colors truncate">{connectedChannel?.name || 'Sala de Voz'}</div>
         </div>
-      </div>
+      </button>
 
       <div class="flex items-center space-x-1">
         <button
@@ -371,9 +407,12 @@
       class="flex items-center space-x-2 p-1 -ml-1 rounded-md hover:bg-[#16171a] transition-colors truncate text-left flex-1 mr-1 cursor-pointer"
     >
       <div class="relative">
-        <div class="w-8 h-8 rounded-full bg-[#16171a] flex items-center justify-center p-1 shadow-sm border border-[#232428]/40 overflow-hidden">
-          <img src={getAvatarUrl(appState.currentUser.avatar)} alt={appState.currentUser.displayName} class="w-full h-full object-contain" />
-        </div>
+        <Avatar
+          name={appState.currentUser.displayName}
+          avatar={appState.currentUser.avatar}
+          userId={appState.currentUser.id}
+          size="md"
+        />
         <div
           class="absolute bottom-0 right-0 w-3 h-3 rounded-full ring-2 ring-[#0a0b0c] {statusColors[
             appState.currentUser.status
