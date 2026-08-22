@@ -1,0 +1,57 @@
+import express from 'express';
+import cors from 'cors';
+import http from 'http';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { WebSocketServer } from 'ws';
+import { initDatabase } from './db/index.js';
+import { WebSocketHandler } from './ws/handler.js';
+import { apiRouter } from './routes/api.js';
+import { startMdnsBroadcaster, getLocalIpAddresses } from './discovery/mdns.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const PORT = parseInt(process.env.PORT || '3000', 10);
+const HOST = '0.0.0.0'; // Listen on all network interfaces for LAN connectivity
+
+// Initialize SQLite database
+initDatabase();
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// Serve uploaded media (images, files)
+const uploadsDir = path.resolve(__dirname, '../uploads');
+app.use('/uploads', express.static(uploadsDir));
+
+// API routes
+app.use('/api', apiRouter);
+
+// Health check
+app.get('/', (_req, res) => {
+  res.send('Concord LAN Server is running.');
+});
+
+// Create HTTP and WebSocket server
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
+new WebSocketHandler(wss);
+
+server.listen(PORT, HOST, () => {
+  const localIps = getLocalIpAddresses();
+  console.log(`\n======================================================`);
+  console.log(`🚀 Concord LAN Server running on port ${PORT}`);
+  console.log(`   Local machine: http://localhost:${PORT}`);
+  if (localIps.length > 0) {
+    console.log(`   LAN Access:`);
+    localIps.forEach((ip) => {
+      console.log(`     👉 http://${ip}:${PORT}`);
+    });
+  }
+  console.log(`======================================================\n`);
+
+  // Start mDNS network broadcasting
+  startMdnsBroadcaster(PORT, 'Concord LAN Server');
+});
