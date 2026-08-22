@@ -40,13 +40,13 @@ fn find_project_root() -> PathBuf {
 }
 
 fn resolve_server_execution(app: &AppHandle) -> Option<(PathBuf, Command)> {
-    let mut candidate_dirs = Vec::new();
+    let mut candidate_dirs: Vec<PathBuf> = Vec::new();
 
     // 1. App Resource Directory (Tauri Packaged App)
     if let Ok(res_dir) = app.path().resource_dir() {
         candidate_dirs.push(res_dir.join("resources").join("server"));
         candidate_dirs.push(res_dir.join("server"));
-        candidate_dirs.push(res_dir.clone());
+        candidate_dirs.push(res_dir);
     }
 
     // 2. Executable Parent Directory (Portable exe / Installed folder)
@@ -54,7 +54,6 @@ fn resolve_server_execution(app: &AppHandle) -> Option<(PathBuf, Command)> {
         if let Some(exe_dir) = exe_path.parent() {
             candidate_dirs.push(exe_dir.join("resources").join("server"));
             candidate_dirs.push(exe_dir.join("server"));
-            candidate_dirs.push(exe_dir.to_path_buf());
         }
     }
 
@@ -65,18 +64,22 @@ fn resolve_server_execution(app: &AppHandle) -> Option<(PathBuf, Command)> {
 
     // Check each candidate directory for dist/server.js or server.js
     for dir in candidate_dirs {
-        if dir.join("dist").join("server.js").exists() {
+        let server_js_path = if dir.join("dist").join("server.js").exists() {
+            Some(dir.join("dist").join("server.js"))
+        } else if dir.join("server.js").exists() {
+            Some(dir.join("server.js"))
+        } else {
+            None
+        };
+
+        if let Some(script) = server_js_path {
             let mut cmd = Command::new("node");
-            cmd.arg(dir.join("dist").join("server.js"));
+            cmd.arg(&script);
             cmd.current_dir(&dir);
+            cmd.env("NODE_PATH", dir.join("node_modules"));
             return Some((dir, cmd));
         }
-        if dir.join("server.js").exists() {
-            let mut cmd = Command::new("node");
-            cmd.arg(dir.join("server.js"));
-            cmd.current_dir(&dir);
-            return Some((dir, cmd));
-        }
+
         if dir.join("src").join("server.ts").exists() {
             let mut cmd = if cfg!(target_os = "windows") {
                 let mut c = Command::new("cmd");
@@ -158,12 +161,21 @@ fn start_local_server(
         });
     }
 
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| PathBuf::from("./concord_data"));
+    let _ = std::fs::create_dir_all(&app_data_dir);
+
     let (_server_dir, mut cmd) = match resolve_server_execution(&app) {
         Some(res) => res,
         None => {
             return Err("Não foi possível localizar os arquivos do servidor Concord. Certifique-se de que os recursos foram incluídos no pacote.".to_string());
         }
     };
+
+    cmd.env("CONCORD_DATA_DIR", &app_data_dir);
+    cmd.env("PORT", "3000");
 
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());

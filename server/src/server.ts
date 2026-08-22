@@ -23,7 +23,14 @@ app.use(cors());
 app.use(express.json());
 
 // Serve uploaded media (images, files, videos) with CORS & streaming support
-const uploadsDir = path.resolve(__dirname, '../uploads');
+const uploadsDir = process.env.CONCORD_DATA_DIR
+  ? path.join(process.env.CONCORD_DATA_DIR, 'uploads')
+  : path.resolve(__dirname, '../uploads');
+
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
 app.use(
   '/uploads',
   express.static(uploadsDir, {

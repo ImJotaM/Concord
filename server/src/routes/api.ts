@@ -10,7 +10,10 @@ import os from 'os';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const uploadsDir = path.resolve(__dirname, '../../uploads');
+const uploadsDir = process.env.CONCORD_DATA_DIR
+  ? path.join(process.env.CONCORD_DATA_DIR, 'uploads')
+  : path.resolve(__dirname, '../../uploads');
+
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
