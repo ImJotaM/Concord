@@ -19,6 +19,7 @@
     Sparkles,
   } from '@lucide/svelte';
   import { onMount, onDestroy } from 'svelte';
+  import { AVATAR_OPTIONS, getAvatarUrl } from '../../utils/icons8';
 
   let activeTab = $state<'profile' | 'voice' | 'screenshare'>('profile');
 
@@ -26,10 +27,8 @@
   let displayName = $state(appState.currentUser.displayName);
   let username = $state(appState.currentUser.username);
   let customStatus = $state(appState.currentUser.customStatus || '');
-  let avatar = $state(appState.currentUser.avatar || '👤');
+  let avatar = $state(appState.currentUser.avatar || 'user');
   let status = $state(appState.currentUser.status || 'online');
-
-  const avatarOptions = ['😎', '🦊', '🐱', '🚀', '⚡', '🎮', '👾', '🔥', '🛡️', '🧙', '🐉', '🤖', '💀', '🍕', '🎯', '👑', '🎧', '💻'];
 
   // Audio Devices & Settings
   let inputDevices = $state<MediaDeviceInfo[]>([]);
@@ -241,9 +240,9 @@
         <!-- 1. PROFILE TAB -->
         <div class="space-y-5">
           <!-- Profile Preview Card -->
-          <div class="bg-[#1e1f22] p-4 rounded-xl flex items-center space-x-4 border border-[#1f2023] shadow-inner">
-            <div class="w-16 h-16 rounded-2xl bg-[#2b2d31] flex items-center justify-center text-3xl shadow ring-2 ring-[#5865f2]/40">
-              {avatar}
+          <div class="bg-[#16171a] p-4 rounded-2xl flex items-center space-x-4 border border-[#232428] shadow-inner">
+            <div class="w-16 h-16 rounded-2xl bg-[#0e0f10] flex items-center justify-center p-2 shadow ring-2 ring-[#5865f2]/40 border border-[#232428]">
+              <img src={getAvatarUrl(avatar)} alt="Avatar" class="w-full h-full object-contain" />
             </div>
             <div class="flex-1 truncate">
               <div class="text-white font-bold text-base truncate">{displayName || 'Seu Nome'}</div>
@@ -262,20 +261,28 @@
 
           <!-- Avatar Picker -->
           <div>
-            <label class="block text-xs font-bold uppercase tracking-wider text-[#949ba4] mb-2">
-              Escolha seu Avatar Emoji
-            </label>
-            <div class="flex flex-wrap gap-2">
-              {#each avatarOptions as emo}
+            <span class="block text-xs font-bold uppercase tracking-wider text-[#949ba4] mb-2">
+              Escolha seu Avatar (Icons8)
+            </span>
+            <div class="grid grid-cols-4 sm:grid-cols-8 gap-2">
+              {#each AVATAR_OPTIONS as opt}
                 <button
                   type="button"
-                  onclick={() => (avatar = emo)}
-                  class="w-10 h-10 rounded-xl bg-[#2b2d31] hover:bg-[#35373c] flex items-center justify-center text-xl transition-all cursor-pointer active:scale-95"
-                  class:ring-2={avatar === emo}
-                  class:ring-[#5865f2]={avatar === emo}
-                  class:bg-[#404249]={avatar === emo}
+                  onclick={() => (avatar = opt.key)}
+                  class="flex flex-col items-center justify-center p-2 rounded-xl bg-[#16171a] hover:bg-[#1e1f22] border border-[#232428] transition-all cursor-pointer group"
+                  class:!border-[#5865f2]={avatar === opt.key || avatar === opt.url}
+                  class:!bg-[#1e1f22]={avatar === opt.key || avatar === opt.url}
+                  class:ring-2={avatar === opt.key || avatar === opt.url}
+                  class:ring-[#5865f2]={avatar === opt.key || avatar === opt.url}
+                  title={opt.name}
                 >
-                  {emo}
+                  <img
+                    src={opt.url}
+                    alt={opt.name}
+                    class="w-8 h-8 object-contain group-hover:scale-110 transition-transform"
+                    loading="lazy"
+                  />
+                  <span class="text-[9px] font-medium text-[#949ba4] mt-1 truncate max-w-full">{opt.name}</span>
                 </button>
               {/each}
             </div>

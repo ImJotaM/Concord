@@ -49,3 +49,5 @@ Thumbs.db
 
 # MCPs files
 .playwright-mcp
+.agents
+skills-lock.json

@@ -16,6 +16,7 @@
     Trash2,
     Shield,
   } from '@lucide/svelte';
+  import { getAvatarUrl } from '../utils/icons8';
 
   const statusColors: Record<string, string> = {
     online: 'bg-[#23a55a]',
@@ -28,7 +29,7 @@
   let hasServerOptions = $derived(appState.canManageChannels || appState.canManageRoles || appState.canDeleteServer);
 </script>
 
-<aside class="w-60 bg-[#2b2d31] flex flex-col h-full select-none z-10 shrink-0 border-r border-[#1f2023]/60 relative">
+<aside class="w-60 bg-[#111214] flex flex-col h-full select-none z-10 shrink-0 border-r border-[#1a1b1e] relative">
   <!-- Server Header -->
   {#if hasServerOptions}
     <div class="relative">
@@ -37,7 +38,7 @@
         tabindex="0"
         onclick={() => (showServerMenu = !showServerMenu)}
         onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') showServerMenu = !showServerMenu; }}
-        class="h-12 border-b border-[#1f2023] px-4 flex items-center justify-between font-semibold text-white shadow-sm hover:bg-[#35373c] transition-colors cursor-pointer w-full text-left select-none"
+        class="h-12 border-b border-[#1a1b1e] px-4 flex items-center justify-between font-semibold text-white shadow-sm hover:bg-[#16171a] transition-colors cursor-pointer w-full text-left select-none"
       >
         <div class="flex items-center space-x-2 truncate">
           <span class="truncate font-bold tracking-wide">
@@ -52,7 +53,7 @@
                 e.stopPropagation();
                 appState.activeModal = 'createChannel';
               }}
-              class="text-[#949ba4] hover:text-white p-1 rounded hover:bg-[#3f4147] transition-colors cursor-pointer"
+              class="text-[#949ba4] hover:text-white p-1 rounded hover:bg-[#1e1f22] transition-colors cursor-pointer"
               title="Criar Canal"
             >
               <Plus class="w-4 h-4" />
@@ -65,7 +66,7 @@
       <!-- Server Dropdown Menu -->
       {#if showServerMenu}
         <div
-          class="absolute top-12 left-2 right-2 bg-[#111214] border border-[#1f2023] rounded-lg shadow-2xl p-1.5 z-50 space-y-1 animate-in fade-in zoom-in-95 duration-100"
+          class="absolute top-12 left-2 right-2 bg-[#0e0f10] border border-[#1a1b1e] rounded-lg shadow-2xl p-1.5 z-50 space-y-1 animate-in fade-in zoom-in-95 duration-100"
         >
           {#if appState.canManageChannels}
             <button
@@ -164,24 +165,31 @@
         {#each appState.currentTextChannels as channel (channel.id)}
           {@const isActive = appState.currentView === 'chat' && appState.currentChannelId === channel.id}
           <div
-            class="w-full flex items-center justify-between px-2 py-1.5 rounded-[4px] text-sm font-medium transition-colors group cursor-pointer"
-            class:bg-[#404249]={isActive}
-            class:text-white={isActive}
-            class:text-[#949ba4]={!isActive}
-            class:hover:bg-[#35373c]={!isActive}
-            class:hover:text-[#dbdee1]={!isActive}
-          >
-            <button
-              onclick={() => {
+            role="button"
+            tabindex="0"
+            onclick={() => {
+              appState.currentView = 'chat';
+              appState.currentChannelId = channel.id;
+              clientService.fetchChannelMessages(channel.id);
+            }}
+            onkeydown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
                 appState.currentView = 'chat';
                 appState.currentChannelId = channel.id;
                 clientService.fetchChannelMessages(channel.id);
-              }}
-              class="flex items-center truncate flex-1 text-left cursor-pointer min-w-0"
-            >
+              }
+            }}
+            class="w-full flex items-center justify-between px-2 py-1.5 rounded-[4px] text-sm font-medium transition-colors group cursor-pointer"
+            class:bg-[#1e1f22]={isActive}
+            class:text-white={isActive}
+            class:text-[#949ba4]={!isActive}
+            class:hover:bg-[#16171a]={!isActive}
+            class:hover:text-[#dbdee1]={!isActive}
+          >
+            <div class="flex items-center truncate flex-1 min-w-0">
               <Hash class={`w-4 h-4 mr-1.5 shrink-0 ${isActive ? 'text-white' : 'text-[#80848e] group-hover:text-[#dbdee1]'}`} />
               <span class="truncate">{channel.name}</span>
-            </button>
+            </div>
 
             {#if appState.canManageChannels}
               <button
@@ -225,34 +233,44 @@
 
           <div class="space-y-1">
             <div
-              class="w-full flex items-center justify-between px-2 py-1.5 rounded-[4px] text-sm font-medium transition-colors group text-left cursor-pointer"
-              class:bg-[#35373c]={isCurrentVoice}
-              class:text-[#23a55a]={isCurrentVoice}
-              class:text-[#949ba4]={!isCurrentVoice}
-              class:hover:bg-[#35373c]={!isCurrentVoice}
-              class:hover:text-[#dbdee1]={!isCurrentVoice}
-            >
-              <button
-                onclick={() => {
+              role="button"
+              tabindex="0"
+              onclick={() => {
+                appState.currentView = 'chat';
+                if (isCurrentVoice) {
+                  appState.currentChannelId = channel.id;
+                } else {
+                  clientService.joinVoiceChannel(channel.id);
+                  appState.currentChannelId = channel.id;
+                }
+              }}
+              onkeydown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
                   appState.currentView = 'chat';
                   if (isCurrentVoice) {
-                    // Switch chat focus or show voice room
                     appState.currentChannelId = channel.id;
                   } else {
                     clientService.joinVoiceChannel(channel.id);
                     appState.currentChannelId = channel.id;
                   }
-                }}
-                class="flex items-center truncate flex-1 text-left cursor-pointer min-w-0"
-              >
+                }
+              }}
+              class="w-full flex items-center justify-between px-2 py-1.5 rounded-[4px] text-sm font-medium transition-colors group text-left cursor-pointer"
+              class:bg-[#16171a]={isCurrentVoice}
+              class:text-[#23a55a]={isCurrentVoice}
+              class:text-[#949ba4]={!isCurrentVoice}
+              class:hover:bg-[#16171a]={!isCurrentVoice}
+              class:hover:text-[#dbdee1]={!isCurrentVoice}
+            >
+              <div class="flex items-center truncate flex-1 min-w-0">
                 <Volume2 class={`w-4 h-4 mr-1.5 shrink-0 ${isCurrentVoice ? 'text-[#23a55a]' : 'text-[#80848e] group-hover:text-[#dbdee1]'}`} />
                 <span class="truncate flex-1">{channel.name}</span>
                 {#if participants.length > 0}
-                  <span class="text-xs bg-[#1e1f22] text-[#dbdee1] px-1.5 py-0.5 rounded-full font-semibold mr-1">
+                  <span class="text-xs bg-[#0e0f10] text-[#dbdee1] px-1.5 py-0.5 rounded-full font-semibold mr-1">
                     {participants.length}
                   </span>
                 {/if}
-              </button>
+              </div>
 
               {#if appState.canManageChannels}
                 <button
@@ -277,27 +295,27 @@
                 {#each participants as participant (participant.userId)}
                   {@const isLocal = participant.userId === appState.currentUser.id}
                   {@const isSpeaking = isLocal ? appState.voiceState.isSpeaking : participant.isSpeaking}
-                  <div class="flex items-center space-x-2 py-1 px-1.5 rounded hover:bg-[#35373c]/50 transition-colors">
+                  <div class="flex items-center space-x-2 py-1 px-1.5 rounded hover:bg-[#16171a] transition-colors">
                     <div
-                      class="w-6 h-6 rounded-full bg-[#1e1f22] flex items-center justify-center text-xs ring-2 ring-transparent transition-all"
-                      class:is-speaking={isSpeaking}
+                      class="w-6 h-6 rounded-full bg-[#0e0f10] flex items-center justify-center p-0.5 ring-2 ring-transparent transition-all shrink-0 border border-[#232428]/40 overflow-hidden"
+                      class:!ring-[#23a55a]={isSpeaking}
                     >
-                      <span>{participant.avatar || '👤'}</span>
+                      <img src={getAvatarUrl(participant.avatar)} alt={participant.displayName} class="w-full h-full object-contain" />
                     </div>
                     <span
-                      class="text-xs font-medium truncate flex-1"
+                      class="text-xs font-medium truncate flex-1 min-w-0"
                       class:text-[#23a55a]={isSpeaking}
                       class:text-[#dbdee1]={!isSpeaking}
                     >
                       {participant.displayName}
                     </span>
                     {#if (isLocal ? appState.voiceState.isScreenSharing : participant.isScreenSharing)}
-                      <span class="text-[9px] bg-[#f23f43] text-white font-bold px-1 py-0.2 rounded shadow">
+                      <span class="text-[9px] bg-[#f23f43] text-white font-bold px-1 py-0.2 rounded shadow shrink-0">
                         AO VIVO
                       </span>
                     {/if}
                     {#if isLocal && appState.voiceState.isMuted}
-                      <MicOff class="w-3.5 h-3.5 text-[#f23f43]" />
+                      <MicOff class="w-3.5 h-3.5 text-[#f23f43] shrink-0" />
                     {/if}
                   </div>
                 {/each}
@@ -312,7 +330,7 @@
   <!-- ACTIVE VOICE STATUS BAR (When connected to voice) -->
   {#if appState.voiceState.activeChannelId}
     {@const connectedChannel = appState.channels.find((c) => c.id === appState.voiceState.activeChannelId)}
-    <div class="bg-[#232428] border-b border-[#1f2023] p-2 flex items-center justify-between">
+    <div class="bg-[#0e0f10] border-b border-[#1a1b1e] p-2 flex items-center justify-between">
       <div class="flex items-center space-x-2 truncate">
         <div class="w-2.5 h-2.5 rounded-full bg-[#23a55a] animate-pulse"></div>
         <div class="truncate">
@@ -327,7 +345,7 @@
       <div class="flex items-center space-x-1">
         <button
           onclick={() => clientService.toggleScreenShare()}
-          class="p-1.5 rounded hover:bg-[#35373c] transition-colors"
+          class="p-1.5 rounded hover:bg-[#16171a] transition-colors cursor-pointer"
           class:text-[#5865f2]={!appState.voiceState.isScreenSharing}
           class:text-[#f23f43]={appState.voiceState.isScreenSharing}
           title={appState.voiceState.isScreenSharing ? 'Parar Tela' : 'Compartilhar Tela'}
@@ -337,7 +355,7 @@
 
         <button
           onclick={() => clientService.leaveVoiceChannel()}
-          class="p-1.5 rounded hover:bg-[#35373c] text-[#f23f43] transition-colors"
+          class="p-1.5 rounded hover:bg-[#16171a] text-[#f23f43] transition-colors cursor-pointer"
           title="Desconectar da Voz"
         >
           <PhoneOff class="w-4 h-4" />
@@ -347,17 +365,17 @@
   {/if}
 
   <!-- USER FOOTER -->
-  <footer class="h-14 bg-[#232428] px-2 flex items-center justify-between border-t border-[#1f2023]/60">
+  <footer class="h-14 bg-[#0a0b0c] px-2 flex items-center justify-between border-t border-[#1a1b1e]">
     <button
       onclick={() => (appState.activeModal = 'settings')}
-      class="flex items-center space-x-2 p-1 -ml-1 rounded-md hover:bg-[#35373c] transition-colors truncate text-left flex-1 mr-1"
+      class="flex items-center space-x-2 p-1 -ml-1 rounded-md hover:bg-[#16171a] transition-colors truncate text-left flex-1 mr-1 cursor-pointer"
     >
       <div class="relative">
-        <div class="w-8 h-8 rounded-full bg-[#313338] flex items-center justify-center text-sm">
-          <span>{appState.currentUser.avatar}</span>
+        <div class="w-8 h-8 rounded-full bg-[#16171a] flex items-center justify-center p-1 shadow-sm border border-[#232428]/40 overflow-hidden">
+          <img src={getAvatarUrl(appState.currentUser.avatar)} alt={appState.currentUser.displayName} class="w-full h-full object-contain" />
         </div>
         <div
-          class="absolute bottom-0 right-0 w-3 h-3 rounded-full ring-2 ring-[#232428] {statusColors[
+          class="absolute bottom-0 right-0 w-3 h-3 rounded-full ring-2 ring-[#0a0b0c] {statusColors[
             appState.currentUser.status
           ]}"
         ></div>
@@ -372,7 +390,7 @@
     <div class="flex items-center space-x-0.5 text-[#b5bac1]">
       <button
         onclick={() => clientService.toggleMute()}
-        class="p-1.5 rounded hover:bg-[#35373c] hover:text-[#dbdee1] transition-colors"
+        class="p-1.5 rounded hover:bg-[#16171a] hover:text-[#dbdee1] transition-colors cursor-pointer"
         class:text-[#f23f43]={appState.voiceState.isMuted}
         title={appState.voiceState.isMuted ? 'Unmute Mic' : 'Mute Mic'}
       >
@@ -385,7 +403,7 @@
 
       <button
         onclick={() => clientService.toggleDeafen()}
-        class="p-1.5 rounded hover:bg-[#35373c] hover:text-[#dbdee1] transition-colors"
+        class="p-1.5 rounded hover:bg-[#16171a] hover:text-[#dbdee1] transition-colors cursor-pointer"
         class:text-[#f23f43]={appState.voiceState.isDeafened}
         title={appState.voiceState.isDeafened ? 'Undeafen' : 'Deafen'}
       >
@@ -394,7 +412,7 @@
 
       <button
         onclick={() => (appState.activeModal = 'settings')}
-        class="p-1.5 rounded hover:bg-[#35373c] hover:text-[#dbdee1] transition-colors"
+        class="p-1.5 rounded hover:bg-[#16171a] hover:text-[#dbdee1] transition-colors cursor-pointer"
         title="User Settings"
       >
         <Settings class="w-4 h-4" />
