@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use tauri::{command, AppHandle, Emitter, State};
+use tauri::{command, AppHandle, Emitter, Manager, State};
 
 #[derive(Default)]
 pub struct ServerManager {
@@ -37,6 +37,56 @@ fn find_project_root() -> PathBuf {
         }
     }
     current
+}
+
+fn resolve_server_execution(app: &AppHandle) -> Option<(PathBuf, Command)> {
+    // 1. Try local development server build
+    let project_root = find_project_root();
+    let local_server_dist = project_root.join("server").join("dist").join("server.js");
+    let local_server_src = project_root.join("server").join("src").join("server.ts");
+
+    if local_server_dist.exists() {
+        let mut cmd = Command::new("node");
+        cmd.arg("dist/server.js");
+        cmd.current_dir(project_root.join("server"));
+        return Some((project_root.join("server"), cmd));
+    }
+
+    if local_server_src.exists() {
+        let mut cmd = if cfg!(target_os = "windows") {
+            let mut c = Command::new("cmd");
+            c.args(&["/C", "npm", "run", "dev"]);
+            c
+        } else {
+            let mut c = Command::new("npm");
+            c.args(&["run", "dev"]);
+            c
+        };
+        cmd.current_dir(project_root.join("server"));
+        return Some((project_root.join("server"), cmd));
+    }
+
+    // 2. Try Tauri bundled resources (installed .exe)
+    if let Ok(res_dir) = app.path().resource_dir() {
+        let bundled_server_dir = res_dir.join("server");
+        let bundled_server_js = bundled_server_dir.join("dist").join("server.js");
+        if bundled_server_js.exists() {
+            let mut cmd = Command::new("node");
+            cmd.arg("dist/server.js");
+            cmd.current_dir(&bundled_server_dir);
+            return Some((bundled_server_dir, cmd));
+        }
+
+        let direct_dist = res_dir.join("dist").join("server.js");
+        if direct_dist.exists() {
+            let mut cmd = Command::new("node");
+            cmd.arg("dist/server.js");
+            cmd.current_dir(&res_dir);
+            return Some((res_dir, cmd));
+        }
+    }
+
+    None
 }
 
 #[command]
@@ -102,25 +152,27 @@ fn start_local_server(
         });
     }
 
-    let root_dir = find_project_root();
+    let (_server_dir, mut cmd) = resolve_server_execution(&app).unwrap_or_else(|| {
+        let root = find_project_root();
+        let mut fallback = if cfg!(target_os = "windows") {
+            let mut c = Command::new("cmd");
+            c.args(&["/C", "npm", "--prefix", "server", "run", "dev"]);
+            c
+        } else {
+            let mut c = Command::new("npm");
+            c.args(&["--prefix", "server", "run", "dev"]);
+            c
+        };
+        fallback.current_dir(&root);
+        (root.join("server"), fallback)
+    });
 
-    let mut cmd = if cfg!(target_os = "windows") {
-        let mut c = Command::new("cmd");
-        c.args(&["/C", "npm", "--prefix", "server", "run", "dev"]);
-        c
-    } else {
-        let mut c = Command::new("npm");
-        c.args(&["--prefix", "server", "run", "dev"]);
-        c
-    };
-
-    cmd.current_dir(&root_dir);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("Failed to spawn server process: {}", e))?;
+        .map_err(|e| format!("Falha ao iniciar processo do servidor local (Certifique-se de ter o Node.js instalado): {}", e))?;
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();

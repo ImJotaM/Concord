@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "concord",
-  "version": "0.1.0",
+  "productName": "Concord",
+  "version": "1.0.0",
   "identifier": "com.concord.lan",
   "build": {
     "frontendDist": "../dist",
@@ -12,13 +12,15 @@
   "app": {
     "windows": [
       {
-        "title": "Concord LAN",
-        "width": 1200,
-        "height": 800,
-        "minWidth": 800,
-        "minHeight": 500,
+        "title": "Concord",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 900,
+        "minHeight": 560,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "decorations": true,
+        "center": true
       }
     ],
     "security": {
@@ -28,6 +30,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "shortDescription": "Concord LAN - High-Speed Voice, Video & Text Chat",
+    "longDescription": "High-speed LAN Voice, Screen Share, Direct Messages and Text Chat Application for local network communities and LAN parties.",
+    "copyright": "Copyright © 2026 Concord",
+    "category": "SocialNetworking",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -35,8 +41,15 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "android": {
-      "debugApplicationIdSuffix": ".debug"
+    "resources": [
+      "../server/dist/**/*",
+      "../server/package.json",
+      "../server/node_modules/**/*"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
     }
   }
 }
