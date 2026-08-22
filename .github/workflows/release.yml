@@ -1,0 +1,73 @@
+name: 'Release Concord Desktop'
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versão do Release (ex: v1.0.0)'
+        required: false
+        default: 'v1.0.0'
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'windows-latest'
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install server dependencies & build server
+        run: |
+          cd server
+          npm ci
+          npm run build
+          cd ..
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build Tauri Desktop App & Create GitHub Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name || inputs.version || 'v1.0.0' }}
+          releaseName: 'Concord LAN App ${{ github.ref_name || inputs.version || 'v1.0.0' }}'
+          releaseBody: |
+            ## 🎉 Concord LAN Release ${{ github.ref_name || inputs.version || 'v1.0.0' }}
+            
+            Aplicativo de bate-papo em rede local (LAN) com voz em alta velocidade WebRTC, compartilhamento de tela com áudio, mensagens diretas (DMs), navegador web integrado e painel de efeitos sonoros (Soundboard).
+            
+            ### 📦 Download para Windows (.exe / .msi)
+            - Baixe o instalador `.exe` (Setup NSIS) ou `.msi` anexado nos Assets abaixo.
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
