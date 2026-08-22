@@ -34,6 +34,29 @@
     }
   });
 
+  $effect(() => {
+    function handleWindowMessage(e: MessageEvent) {
+      if (!e.data || typeof e.data !== 'object') return;
+      if (e.data.type === 'concord-browser-nav-request' && e.data.url) {
+        navigateTo(e.data.url);
+      } else if (e.data.type === 'concord-browser-nav') {
+        if (e.data.url && activeTab) {
+          urlInput = e.data.url;
+        }
+        if (e.data.title && activeTab) {
+          appState.updateBrowserTab(activeTab.id, {
+            title: e.data.title,
+          });
+        }
+      }
+    }
+
+    window.addEventListener('message', handleWindowMessage);
+    return () => {
+      window.removeEventListener('message', handleWindowMessage);
+    };
+  });
+
   function extractYouTubeVideoId(input: string): string | null {
     const match = input.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
     return match ? match[1] : null;
@@ -130,16 +153,8 @@
       return url;
     }
 
-    // Google with igu=1 and DuckDuckGo and Mobile Wikipedia embed directly
-    if (url.includes('google.') && url.includes('igu=1')) {
-      return url;
-    }
-    if (url.includes('html.duckduckgo.com') || url.includes('.m.wikipedia.org') || url.includes('devdocs.io')) {
-      return url;
-    }
-
-    // All other sites route via relative HTTPS proxy to prevent mixed content
-    return `/api/proxy?url=${encodeURIComponent(url)}`;
+    const serverBase = appState.serverUrl || 'http://localhost:3000';
+    return `${serverBase}/api/proxy?url=${encodeURIComponent(url)}`;
   }
 
   let canGoBack = $derived((activeTab?.historyIndex ?? 0) > 0);

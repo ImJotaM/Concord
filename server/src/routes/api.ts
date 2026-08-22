@@ -117,7 +117,7 @@ apiRouter.post('/users/:userId', (req, res) => {
   res.json(updated);
 });
 
-// In-App Web Proxy Endpoint (bypasses X-Frame-Options and injects base tags)
+// In-App Web Proxy Endpoint (bypasses X-Frame-Options, CSP, and injects navigation bridges)
 apiRouter.get('/proxy', async (req, res) => {
   const rawUrl = req.query.url as string;
   if (!rawUrl) {
@@ -133,31 +133,85 @@ apiRouter.get('/proxy', async (req, res) => {
 
     const parsed = new URL(targetUrl);
 
-    // Special case for Google search: use iframe-friendly parameter igu=1
+    // Special case for Google search: ensure igu=1 parameter
     if (parsed.hostname.includes('google.') && !parsed.searchParams.has('igu')) {
       parsed.searchParams.set('igu', '1');
     }
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+
     const response = await fetch(parsed.toString(), {
+      signal: controller.signal,
       headers: {
         'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
       },
       redirect: 'follow',
     });
+
+    clearTimeout(timeoutId);
+
+    // Remove restrictive framing and CSP headers
+    res.removeHeader('X-Frame-Options');
+    res.removeHeader('Content-Security-Policy');
+    res.removeHeader('Cross-Origin-Opener-Policy');
+    res.removeHeader('Cross-Origin-Embedder-Policy');
+    res.setHeader('Access-Control-Allow-Origin', '*');
 
     const contentType = response.headers.get('content-type') || 'text/html';
     res.setHeader('Content-Type', contentType);
 
     if (contentType.includes('text/html')) {
       let html = await response.text();
-      const baseTag = `<base href="${parsed.origin}/">`;
+      const escapedTarget = targetUrl.replace(/"/g, '&quot;');
+      const escapedOrigin = parsed.origin;
+
+      const injection = `
+        <base href="${escapedOrigin}/">
+        <script>
+          (function() {
+            try {
+              window.parent.postMessage({
+                type: 'concord-browser-nav',
+                url: "${targetUrl.replace(/"/g, '\\"')}",
+                title: document.title || "${parsed.hostname}"
+              }, '*');
+            } catch(e) {}
+
+            document.addEventListener('click', function(e) {
+              var a = e.target.closest('a');
+              if (!a) return;
+              var href = a.getAttribute('href');
+              if (!href || href.startsWith('#') || href.startsWith('javascript:')) return;
+
+              e.preventDefault();
+              try {
+                var full = new URL(href, "${escapedTarget}").href;
+                if (full.includes('google.') && full.includes('/url?')) {
+                  var m = full.match(/[?&]q=([^&]+)/);
+                  if (m && m[1]) full = decodeURIComponent(m[1]);
+                }
+                window.parent.postMessage({
+                  type: 'concord-browser-nav-request',
+                  url: full
+                }, '*');
+              } catch(err) {}
+            }, true);
+          })();
+        </script>
+      `;
+
       if (html.includes('<head>')) {
-        html = html.replace('<head>', `<head>${baseTag}`);
+        html = html.replace('<head>', `<head>${injection}`);
+      } else if (html.includes('<html>')) {
+        html = html.replace('<html>', `<html><head>${injection}</head>`);
       } else {
-        html = `${baseTag}${html}`;
+        html = `${injection}${html}`;
       }
       res.send(html);
     } else {
@@ -165,25 +219,28 @@ apiRouter.get('/proxy', async (req, res) => {
       res.send(buffer);
     }
   } catch (err: any) {
-    res.status(500).send(`
+    res.status(200).send(`
       <!DOCTYPE html>
       <html>
         <head>
           <meta charset="utf-8">
           <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #1e1f22; color: #dbdee1; padding: 2rem; text-align: center; }
-            .card { max-width: 480px; margin: 3rem auto; background: #2b2d31; padding: 2.5rem; border-radius: 1rem; border: 1px solid #35373c; box-shadow: 0 10px 25px rgba(0,0,0,0.3); }
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #1e1f22; color: #dbdee1; padding: 2rem; text-align: center; margin: 0; }
+            .card { max-width: 520px; margin: 4rem auto; background: #2b2d31; padding: 2.5rem; border-radius: 1rem; border: 1px solid #35373c; box-shadow: 0 10px 25px rgba(0,0,0,0.3); }
             h2 { color: #f23f43; margin-top: 0; font-size: 18px; }
-            p { color: #949ba4; font-size: 13px; line-height: 1.5; }
-            .btn { display: inline-block; margin-top: 1rem; background: #5865f2; color: white; padding: 0.6rem 1.2rem; border-radius: 0.5rem; text-decoration: none; font-weight: bold; font-size: 13px; }
+            p { color: #949ba4; font-size: 13px; line-height: 1.6; }
+            .btn { display: inline-flex; align-items: center; justify-content: center; margin-top: 1.5rem; background: #5865f2; color: white; padding: 0.75rem 1.5rem; border-radius: 0.5rem; text-decoration: none; font-weight: bold; font-size: 13px; transition: background 0.2s; }
+            .btn:hover { background: #4752c4; }
           </style>
         </head>
         <body>
           <div class="card">
-            <h2>Não foi possível carregar a página</h2>
-            <p>O site solicitado recusou a conexão direta ou ocorreu um erro de rede.</p>
-            <p style="font-family: monospace; font-size: 11px; color: #72767d;">${err.message || 'Erro de conexão'}</p>
-            <a class="btn" href="${rawUrl}" target="_blank" rel="noopener noreferrer">Abrir em Nova Aba Externa ↗</a>
+            <h2>Não foi possível carregar no modo embutido</h2>
+            <p>O site <strong>${rawUrl}</strong> utiliza proteções avançadas contra visualização em quadros ou está indisponível na rede.</p>
+            <p style="font-family: monospace; font-size: 11px; color: #72767d; background: #1e1f22; padding: 0.5rem; border-radius: 0.5rem; word-break: break-all;">${err.message || 'Falha de conexão'}</p>
+            <a class="btn" href="${rawUrl.startsWith('http') ? rawUrl : 'https://' + rawUrl}" target="_blank" rel="noopener noreferrer">
+              Abrir no Navegador Externo (Windows) ↗
+            </a>
           </div>
         </body>
       </html>

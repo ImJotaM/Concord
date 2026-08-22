@@ -175,26 +175,26 @@
       <!-- Status Badge & Visualizer -->
       <div class="bg-[#1e1f22] p-4 rounded-xl border border-[#1f2023] space-y-3">
         <div class="flex items-center justify-between">
-          <span class="text-xs font-semibold text-[#949ba4] uppercase tracking-wider">Status:</span>
+          <span class="text-xs font-semibold text-[#949ba4] uppercase tracking-wider">Status da Permissão:</span>
           {#if permState === 'granted'}
             <span class="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-bold text-emerald-400 border border-emerald-500/30">
               <span class="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              Microfone Ativo & Liberado
+              Microfone Liberado
             </span>
           {:else if permState === 'denied'}
             <span class="inline-flex items-center gap-1.5 rounded-full bg-rose-500/15 px-3 py-1 text-xs font-bold text-rose-400 border border-rose-500/30">
-              <span class="h-2 w-2 rounded-full bg-rose-400"></span>
-              Bloqueado no Navegador
+              <ShieldAlert class="w-3.5 h-3.5" />
+              Bloqueado Anteriormente
             </span>
           {:else if !isSecure}
             <span class="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-3 py-1 text-xs font-bold text-amber-400 border border-amber-500/30">
-              <AlertTriangle class="w-3 h-3" />
-              Acesso via IP (Requer HTTPS ou localhost)
+              <AlertTriangle class="w-3.5 h-3.5" />
+              Conexão HTTP (Use HTTPS ou localhost)
             </span>
           {:else}
             <span class="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/15 px-3 py-1 text-xs font-bold text-indigo-400 border border-indigo-500/30">
               <Radio class="w-3 h-3 animate-pulse" />
-              Pronto para solicitar permissão
+              Aguardando Permissão
             </span>
           {/if}
         </div>
@@ -219,43 +219,36 @@
         {/if}
       </div>
 
-      <!-- Instructions & Troubleshooting Card -->
-      <div class="rounded-xl border border-[#35373c] bg-[#1e1f22]/80 p-4 text-xs text-[#dbdee1] space-y-3">
+      <!-- Step-by-Step Instructions Card -->
+      <div class="rounded-xl border border-[#35373c] bg-[#1e1f22] p-4 text-xs text-[#dbdee1] space-y-3">
         <div class="flex items-center gap-2 font-bold text-white">
           <HelpCircle class="h-4 w-4 text-[#5865f2]" />
-          <span>Por que o popup de permissão pode não ter aparecido?</span>
+          <span>Como redefinir e permitir o microfone:</span>
         </div>
 
         <div class="space-y-2.5 text-[12px] leading-relaxed">
-          <div class="bg-[#2b2d31] p-2.5 rounded-lg border border-[#1f2023]">
-            <div class="font-semibold text-amber-300 flex items-center gap-1.5 mb-1">
-              <Lock class="w-3.5 h-3.5" />
-              <span>1. Permissão bloqueada anteriormente no navegador</span>
+          <!-- Step 1: In Browser -->
+          <div class="bg-[#2b2d31] p-3 rounded-lg border border-[#1f2023] space-y-1">
+            <div class="font-semibold text-emerald-400 flex items-center gap-1.5">
+              <span>🌐 No Navegador (Chrome, Edge, Brave, Firefox):</span>
             </div>
-            <p class="text-[#949ba4] text-[11px]">
-              Se você clicou em "Bloquear" ou fechou a mensagem antes, o navegador não pergunta novamente.
-              <strong>Solução:</strong> Clique no ícone de <strong>Cadeado / Ajustes do Site</strong> à esquerda do endereço <code class="bg-black/40 px-1 py-0.5 rounded text-white">http://localhost:5173</code> e marque <strong>Microfone: Permitir</strong>, depois recarregue a página.
-            </p>
+            <ol class="list-decimal list-inside text-[#949ba4] text-[11px] space-y-1 pl-1">
+              <li>Clique no ícone de <strong>Cadeado 🔒</strong> ou <strong>Ajustes do Site 🎛️</strong> à esquerda da barra de endereço URL.</li>
+              <li>Na linha <strong>Microfone</strong>, mude de <em>"Bloquear"</em> para <strong class="text-white">"Permitir"</strong> (ou clique em <em>Redefinir permissões</em>).</li>
+              <li>Pressione <kbd class="bg-black/40 px-1.5 py-0.5 rounded text-white font-mono text-[10px]">F5</kbd> para recarregar ou clique em <strong>"Tentar Novamente"</strong> abaixo.</li>
+            </ol>
           </div>
 
-          <div class="bg-[#2b2d31] p-2.5 rounded-lg border border-[#1f2023]">
-            <div class="font-semibold text-amber-300 flex items-center gap-1.5 mb-1">
-              <AlertTriangle class="w-3.5 h-3.5" />
-              <span>2. Acessando pelo IP da rede local (ex: celular)</span>
+          <!-- Step 2: In Windows Settings -->
+          <div class="bg-[#2b2d31] p-3 rounded-lg border border-[#1f2023] space-y-1">
+            <div class="font-semibold text-indigo-400 flex items-center gap-1.5">
+              <span>💻 No Aplicativo do Windows (.exe):</span>
             </div>
-            <p class="text-[#949ba4] text-[11px]">
-              Os navegadores bloqueiam o microfone em conexões HTTP normais com endereço IP. Para usar microfone no celular ou outros PCs, use o modo HTTPS (<code class="bg-black/40 px-1 py-0.5 rounded text-white">npm run start:https</code>) ou acesse no próprio computador como <code class="bg-black/40 px-1 py-0.5 rounded text-white">localhost</code>.
-            </p>
-          </div>
-
-          <div class="bg-[#2b2d31] p-2.5 rounded-lg border border-[#1f2023]">
-            <div class="font-semibold text-amber-300 flex items-center gap-1.5 mb-1">
-              <Mic class="w-3.5 h-3.5" />
-              <span>3. Privacidade do Windows</span>
-            </div>
-            <p class="text-[#949ba4] text-[11px]">
-              Vá em <em>Configurações do Windows > Privacidade e Segurança > Microfone</em> e garanta que <strong>"Permitir que os aplicativos acessem seu microfone"</strong> está ATIVADO.
-            </p>
+            <ol class="list-decimal list-inside text-[#949ba4] text-[11px] space-y-1 pl-1">
+              <li>Abra o <strong>Menu Iniciar</strong> do Windows e digite <em>"Configurações de privacidade do microfone"</em>.</li>
+              <li>Verifique se a opção <strong>"Permitir que os aplicativos acessem seu microfone"</strong> está <strong>ATIVADA</strong>.</li>
+              <li>Clique no botão azul <strong>"Solicitar Permissão do Microfone"</strong> abaixo para tentar novamente.</li>
+            </ol>
           </div>
         </div>
       </div>
@@ -277,7 +270,7 @@
           class="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-[#5865f2] hover:bg-[#4752c4] active:scale-[0.98] px-6 py-3 text-sm font-bold text-white shadow-lg shadow-[#5865f2]/25 transition-all disabled:opacity-50 cursor-pointer"
         >
           <Mic class="w-4 h-4" />
-          <span>{isRequesting ? 'Solicitando permissão ao navegador...' : 'Solicitar Permissão do Microfone'}</span>
+          <span>{isRequesting ? 'Testando microfone...' : '🔄 Solicitar / Tentar Microfone Novamente'}</span>
         </button>
 
         <button
@@ -299,7 +292,7 @@
 
       <button
         onclick={() => (appState.activeModal = null)}
-        class="w-full inline-flex items-center justify-center rounded-xl bg-[#1e1f22] hover:bg-[#35373c] px-4 py-2 text-xs font-semibold text-[#949ba4] hover:text-white transition-colors"
+        class="w-full inline-flex items-center justify-center rounded-xl bg-[#1e1f22] hover:bg-[#35373c] px-4 py-2 text-xs font-semibold text-[#949ba4] hover:text-white transition-colors cursor-pointer"
       >
         Cancelar
       </button>
