@@ -1,0 +1,28 @@
+﻿{
+  "pack": "color",
+  "size": 48,
+  "icons": {
+    "user": { "id": "13042", "commonName": "user" },
+    "crown": { "id": "13728", "commonName": "crown" },
+    "shield": { "id": "16239", "commonName": "shield" },
+    "robot": { "id": "9tRPx6QHufDN", "commonName": "ai-robot" },
+    "controller": { "id": "11907", "commonName": "controller" },
+    "rocket": { "id": "15175", "commonName": "rocket" },
+    "fire": { "id": "18515", "commonName": "fire-element" },
+    "diamond": { "id": "17333", "commonName": "diamond" },
+    "lightning": { "id": "15366", "commonName": "lightning-bolt" },
+    "headphones": { "id": "20747", "commonName": "headphones" },
+    "ninja": { "id": "20809", "commonName": "ninja" },
+    "wizard": { "id": "17388", "commonName": "wizard" },
+    "astronaut": { "id": "13474", "commonName": "astronaut" },
+    "cat": { "id": "16017", "commonName": "cat" },
+    "dog": { "id": "16018", "commonName": "dog" },
+    "fox": { "id": "40811", "commonName": "fox" },
+    "panda": { "id": "16093", "commonName": "panda" },
+    "lion": { "id": "33035", "commonName": "lion" },
+    "frog": { "id": "18912", "commonName": "frog" },
+    "dragon": { "id": "NkphTkua9tjT", "commonName": "dragon" },
+    "skull": { "id": "14870", "commonName": "skull" },
+    "ghost": { "id": "17343", "commonName": "ghost" }
+  }
+}

@@ -245,14 +245,14 @@
               <div class="flex items-center space-x-2.5 truncate mr-2">
                 <Smartphone class="w-4 h-4 text-[#23a55a] shrink-0" />
                 <div class="truncate">
-                  <div class="text-[11px] text-[#949ba4]">Link do App para Amigos no Wi-Fi (Navegador/Celular):</div>
+                  <div class="text-[11px] text-[#949ba4]">Link direto para Amigos no Wi-Fi (Navegador/Celular):</div>
                   <div class="text-xs text-[#23a55a] font-mono font-bold">
-                    https://{primaryLanIp}:5173
+                    http://{primaryLanIp}:3000
                   </div>
                 </div>
               </div>
               <button
-                onclick={() => copyToClipboard(`https://${primaryLanIp}:5173`, 'lan-app-url')}
+                onclick={() => copyToClipboard(`http://${primaryLanIp}:3000`, 'lan-app-url')}
                 class="p-1.5 text-[#949ba4] hover:text-white rounded hover:bg-[#313338] transition-colors shrink-0 cursor-pointer"
                 title="Copiar Link do App"
               >

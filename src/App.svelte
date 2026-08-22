@@ -30,7 +30,7 @@
   });
 </script>
 
-<main class="flex h-screen w-screen bg-[#1e1f22] overflow-hidden select-none font-sans text-[#dbdee1]">
+<main class="flex h-screen w-screen bg-[#0e0f10] overflow-hidden select-none font-sans text-[#dbdee1]">
   <!-- 1. Leftmost Server Rail -->
   <ServerSidebar />
 
