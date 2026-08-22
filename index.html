@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>Concord LAN</title>
+    <!-- Prevent drag selection across Discord UI for native desktop/mobile feel -->
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        user-select: none;
+        -webkit-user-select: none;
+        overflow: hidden;
+        background-color: #1e1f22;
+        color: #dbdee1;
+        font-family: 'gg sans', 'Noto Sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+      }
+    </style>
+  </head>
+  <body class="bg-[#1e1f22] text-[#dbdee1] h-screen w-screen overflow-hidden select-none">
+    <div id="app" class="h-full w-full"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

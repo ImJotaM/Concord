@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+/* Discord custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background-color: #2b2d31;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #1a1b1e;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #111214;
+}
+
+/* Custom transitions and glass effects */
+.transition-sidebar {
+  transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Pulse animation for voice speaking indicator */
+@keyframes speaking-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 2px #23a55a;
+  }
+  50% {
+    box-shadow: 0 0 0 4px #23a55a, 0 0 10px rgba(35, 165, 90, 0.5);
+  }
+}
+
+.is-speaking {
+  animation: speaking-pulse 1.5s infinite;
+  border-color: #23a55a !important;
+}

@@ -1,0 +1,47 @@
+# Node.js & Package Managers
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# Svelte & Frontend Build
+.svelte-kit/
+dist/
+build/
+out/
+.vercel/
+
+# Rust & Cargo
+/target/
+**/target/
+**/*.rs.bk
+
+# Tauri Specific
+src-tauri/target/
+src-tauri/gen/
+*.app
+*.exe
+*.dmg
+*.deb
+*.rpm
+*.msi
+*.AppImage
+
+# Environment Variables & Secrets
+.env
+.env.*
+!.env.example
+
+# IDEs & Editors
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# OS System Files
+.DS_Store
+Thumbs.db
