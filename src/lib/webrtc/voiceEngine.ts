@@ -97,6 +97,8 @@ export class WebRtcVoiceEngine {
   private isMakingOfferMap: Map<string, boolean> = new Map();
   private ignoreOfferMap: Map<string, boolean> = new Map();
   private screenSenders: Map<string, RTCRtpSender[]> = new Map();
+  private remoteMicTracks: Map<string, MediaStreamTrack> = new Map();
+  private remoteScreenAudioTracks: Map<string, MediaStreamTrack> = new Map();
   private lastIceRestartMap: Map<string, number> = new Map();
   private iceRestartAttemptsMap: Map<string, number> = new Map();
   private myPeerId: string | null = null;
@@ -137,9 +139,17 @@ export class WebRtcVoiceEngine {
     return { inputs, outputs };
   }
 
+  private rawMicStream: MediaStream | null = null;
+  private processedStream: MediaStream | null = null;
+  private highPassFilter: BiquadFilterNode | null = null;
+  private notchFilter: BiquadFilterNode | null = null;
+  private noiseGateGain: GainNode | null = null;
+  private agcCompressor: DynamicsCompressorNode | null = null;
+  private destinationNode: MediaStreamAudioDestinationNode | null = null;
+
   async startLocalAudio(deviceId?: string): Promise<MediaStream> {
-    if (this.localStream) {
-      return this.localStream;
+    if (this.processedStream && this.rawMicStream) {
+      return this.processedStream;
     }
 
     if (typeof window !== 'undefined' && !window.isSecureContext && !navigator.mediaDevices) {
@@ -150,22 +160,28 @@ export class WebRtcVoiceEngine {
       throw new Error('MEDIA_DEVICES_UNSUPPORTED');
     }
 
-    console.log('[WebRTC-Debug] 🎙️ Solicitando permissão do microfone...');
+    console.log('[WebRTC-Debug] 🎙️ Solicitando permissão do microfone com DSP profissional...');
     try {
+      const audioSettings = appState.audioSettings;
+      const targetDevice = deviceId || (audioSettings.inputDeviceId !== 'default' ? audioSettings.inputDeviceId : undefined);
+
       const constraints: MediaStreamConstraints = {
         audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+          echoCancellation: audioSettings.echoCancellation ?? true,
+          noiseSuppression: audioSettings.noiseSuppression ?? true,
+          autoGainControl: audioSettings.autoGainControl ?? true,
+          channelCount: 1,
+          sampleRate: 48000,
+          ...(targetDevice ? { deviceId: { exact: targetDevice } } : {}),
         },
         video: false,
       };
 
-      this.localStream = await navigator.mediaDevices.getUserMedia(constraints);
-      console.log('[WebRTC-Debug] ✅ Microfone capturado com sucesso:', this.localStream.id);
+      this.rawMicStream = await navigator.mediaDevices.getUserMedia(constraints);
+      console.log('[WebRTC-Debug] ✅ Microfone capturado com sucesso:', this.rawMicStream.id);
 
-      this.setupSpeakingDetectionAndStreaming();
+      this.setupDspAudioPipeline();
+      this.localStream = this.processedStream || this.rawMicStream;
       return this.localStream;
     } catch (err: any) {
       console.error('[WebRTC-Debug] ❌ Erro ao acessar microfone:', err);
@@ -173,20 +189,172 @@ export class WebRtcVoiceEngine {
     }
   }
 
-  private setupSpeakingDetectionAndStreaming() {
-    if (!this.localStream) return;
+  async applyAudioSettings(settings: Partial<typeof appState.audioSettings>) {
+    const audioSettings = { ...appState.audioSettings, ...settings };
+    const now = this.audioContext ? this.audioContext.currentTime : 0;
+
+    // 1. High-Pass filter update (85Hz)
+    if (this.highPassFilter) {
+      if (audioSettings.noiseSuppression) {
+        this.highPassFilter.frequency.setTargetAtTime(85, now, 0.05);
+      } else {
+        this.highPassFilter.frequency.setTargetAtTime(10, now, 0.05); // Flat bypass
+      }
+    }
+
+    // 2. AGC Compressor update
+    if (this.agcCompressor) {
+      if (audioSettings.autoGainControl) {
+        this.agcCompressor.threshold.setTargetAtTime(-24, now, 0.05);
+        this.agcCompressor.ratio.setTargetAtTime(12, now, 0.05);
+      } else {
+        this.agcCompressor.threshold.setTargetAtTime(0, now, 0.05); // Bypass
+        this.agcCompressor.ratio.setTargetAtTime(1, now, 0.05);
+      }
+    }
+
+    // 3. Hardware track constraints
+    if (this.rawMicStream) {
+      const track = this.rawMicStream.getAudioTracks()[0];
+      if (track && typeof track.applyConstraints === 'function') {
+        const targetDevice = audioSettings.inputDeviceId !== 'default' ? audioSettings.inputDeviceId : undefined;
+        try {
+          await track.applyConstraints({
+            echoCancellation: audioSettings.echoCancellation ?? true,
+            noiseSuppression: audioSettings.noiseSuppression ?? true,
+            autoGainControl: audioSettings.autoGainControl ?? true,
+            ...(targetDevice ? { deviceId: { exact: targetDevice } } : {}),
+          });
+          console.log('[WebRTC-Debug] 🎛️ Configurações de áudio aplicadas com sucesso:', audioSettings);
+        } catch (e) {
+          console.warn('[WebRTC-Debug] ⚠️ Hardware constraints update error:', e);
+        }
+      }
+    }
+  }
+
+  async switchMicrophone(deviceId: string) {
+    console.log(`[WebRTC-Debug] 🔄 Alternando dispositivo de microfone para: ${deviceId}`);
+    try {
+      const audioSettings = appState.audioSettings;
+      const targetDevice = deviceId !== 'default' ? deviceId : undefined;
+
+      const constraints: MediaStreamConstraints = {
+        audio: {
+          echoCancellation: audioSettings.echoCancellation ?? true,
+          noiseSuppression: audioSettings.noiseSuppression ?? true,
+          autoGainControl: audioSettings.autoGainControl ?? true,
+          channelCount: 1,
+          sampleRate: 48000,
+          ...(targetDevice ? { deviceId: { exact: targetDevice } } : {}),
+        },
+        video: false,
+      };
+
+      const newRawStream = await navigator.mediaDevices.getUserMedia(constraints);
+      if (this.rawMicStream) {
+        this.rawMicStream.getTracks().forEach((t) => t.stop());
+      }
+      this.rawMicStream = newRawStream;
+
+      // Re-setup DSP pipeline
+      this.setupDspAudioPipeline();
+      this.localStream = this.processedStream || this.rawMicStream;
+
+      // Replace audio track across all active WebRTC peer connections
+      if (this.localStream) {
+        const newTrack = this.localStream.getAudioTracks()[0];
+        if (newTrack) {
+          newTrack.enabled = !this.isMuted;
+          for (const [peerId, pc] of this.peerConnections.entries()) {
+            const senders = pc.getSenders();
+            const audioSender = senders.find((s) => s.track && s.track.kind === 'audio');
+            if (audioSender) {
+              await audioSender.replaceTrack(newTrack);
+              console.log(`[WebRTC-Debug] ✅ Track DSP substituída para o peer ${peerId}`);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[WebRTC-Debug] ❌ Erro ao trocar de microfone:', err);
+    }
+  }
+
+  private setupDspAudioPipeline() {
+    if (!this.rawMicStream) return;
 
     try {
-      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const source = this.audioContext.createMediaStreamSource(this.localStream);
+      if (this.scriptProcessor) {
+        try { this.scriptProcessor.disconnect(); } catch (e) {}
+        this.scriptProcessor = null;
+      }
+      if (this.audioContext && this.audioContext.state !== 'closed') {
+        try { this.audioContext.close(); } catch (e) {}
+        this.audioContext = null;
+      }
+
+      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 48000 });
+      if (this.audioContext.state === 'suspended') {
+        this.audioContext.resume().catch(() => {});
+      }
+
+      const source = this.audioContext.createMediaStreamSource(this.rawMicStream);
+
+      // 1. High-Pass Filter (85Hz) - removes sub-bass room rumble, air conditioning, fan resonance
+      this.highPassFilter = this.audioContext.createBiquadFilter();
+      this.highPassFilter.type = 'highpass';
+      this.highPassFilter.frequency.setValueAtTime(
+        appState.audioSettings.noiseSuppression ? 85 : 10,
+        this.audioContext.currentTime
+      );
+
+      // 2. Notch Filter (60Hz electrical hum filter)
+      this.notchFilter = this.audioContext.createBiquadFilter();
+      this.notchFilter.type = 'notch';
+      this.notchFilter.frequency.setValueAtTime(60, this.audioContext.currentTime);
+      this.notchFilter.Q.setValueAtTime(4.0, this.audioContext.currentTime);
+
+      // 3. Noise Gate (Dynamically opened/closed based on voice envelope detection)
+      this.noiseGateGain = this.audioContext.createGain();
+      this.noiseGateGain.gain.setValueAtTime(1.0, this.audioContext.currentTime);
+
+      // 4. Automatic Gain Control (AGC) - Studio Dynamics Compressor
+      this.agcCompressor = this.audioContext.createDynamicsCompressor();
+      if (appState.audioSettings.autoGainControl) {
+        this.agcCompressor.threshold.setValueAtTime(-24, this.audioContext.currentTime);
+        this.agcCompressor.knee.setValueAtTime(30, this.audioContext.currentTime);
+        this.agcCompressor.ratio.setValueAtTime(12, this.audioContext.currentTime);
+      } else {
+        this.agcCompressor.threshold.setValueAtTime(0, this.audioContext.currentTime);
+        this.agcCompressor.ratio.setValueAtTime(1, this.audioContext.currentTime);
+      }
+      this.agcCompressor.attack.setValueAtTime(0.003, this.audioContext.currentTime);
+      this.agcCompressor.release.setValueAtTime(0.25, this.audioContext.currentTime);
+
+      // 5. Analyser node for real-time frequency analysis & speaking detection
       this.analyser = this.audioContext.createAnalyser();
       this.analyser.fftSize = 512;
-      this.analyser.smoothingTimeConstant = 0.4;
-      source.connect(this.analyser);
+      this.analyser.smoothingTimeConstant = 0.3;
 
-      // Real-time Low-Latency Audio Streaming Pipeline
+      // 6. Destination node (The processed Web Audio stream transmitted to peers)
+      this.destinationNode = this.audioContext.createMediaStreamDestination();
+      this.processedStream = this.destinationNode.stream;
+
+      // Connect DSP chain:
+      // Source -> HighPass -> Notch -> NoiseGate -> AGC Compressor -> Destination
+      source.connect(this.highPassFilter);
+      this.highPassFilter.connect(this.notchFilter);
+      this.notchFilter.connect(this.noiseGateGain);
+      this.noiseGateGain.connect(this.agcCompressor);
+      this.agcCompressor.connect(this.destinationNode);
+
+      // Branch to analyser for speaking and noise gate level calculation
+      this.notchFilter.connect(this.analyser);
+
+      // ScriptProcessor for fallback chunks (connected after DSP processing)
       this.scriptProcessor = this.audioContext.createScriptProcessor(2048, 1, 1);
-      source.connect(this.scriptProcessor);
+      this.agcCompressor.connect(this.scriptProcessor);
       const silentGain = this.audioContext.createGain();
       silentGain.gain.value = 0;
       this.scriptProcessor.connect(silentGain);
@@ -194,14 +362,31 @@ export class WebRtcVoiceEngine {
 
       this.scriptProcessor.onaudioprocess = (e) => {
         if (this.isMuted || !this.isSpeaking || !this.onAudioChunk) return;
+
+        let needFallback = false;
+        if (this.peerConnections.size === 0) {
+          needFallback = true;
+        } else {
+          for (const pc of this.peerConnections.values()) {
+            if (
+              pc.connectionState !== 'connected' &&
+              pc.iceConnectionState !== 'connected' &&
+              pc.iceConnectionState !== 'completed'
+            ) {
+              needFallback = true;
+              break;
+            }
+          }
+        }
+
+        if (!needFallback) return;
+
         const inputData = e.inputBuffer.getChannelData(0);
-        // Convert Float32 to 16-bit PCM Int16
         const int16 = new Int16Array(inputData.length);
         for (let i = 0; i < inputData.length; i++) {
           const s = Math.max(-1, Math.min(1, inputData[i]));
           int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
         }
-        // Fast binary to base64
         const uint8 = new Uint8Array(int16.buffer);
         let binary = '';
         const len = uint8.byteLength;
@@ -212,11 +397,20 @@ export class WebRtcVoiceEngine {
         this.onAudioChunk(base64);
       };
 
+      // Real-time Noise Gate & Speaking Detection loop
       const buffer = new Uint8Array(this.analyser.frequencyBinCount);
-      let speakingFrames = 0;
+      let speakingHoldFrames = 0;
 
       const checkVolume = () => {
-        if (!this.analyser || this.isMuted) {
+        if (!this.analyser) return;
+
+        const now = this.audioContext ? this.audioContext.currentTime : 0;
+        const settings = appState.audioSettings;
+
+        if (this.isMuted) {
+          if (this.noiseGateGain) {
+            this.noiseGateGain.gain.setTargetAtTime(0.0001, now, 0.01);
+          }
           if (this.isSpeaking) {
             this.isSpeaking = false;
             this.onSpeakingChange(false);
@@ -230,16 +424,40 @@ export class WebRtcVoiceEngine {
         for (let i = 0; i < buffer.length; i++) {
           sum += buffer[i];
         }
-        const average = sum / buffer.length;
+        const average = sum / buffer.length; // 0 to 128
+        const normalizedLevel = (average / 128) * 100;
 
-        const nowSpeaking = average > 18;
-        if (nowSpeaking) {
-          speakingFrames = Math.min(speakingFrames + 1, 10);
+        const useNoiseSuppression = settings.noiseSuppression ?? true;
+        const sensitivity = settings.sensitivity ?? 75;
+        const threshold = Math.max(6, (100 - sensitivity) * 0.4);
+
+        const voiceDetected = normalizedLevel > threshold;
+
+        if (useNoiseSuppression) {
+          if (voiceDetected) {
+            speakingHoldFrames = 15; // ~250ms hold
+            if (this.noiseGateGain) {
+              this.noiseGateGain.gain.setTargetAtTime(1.0, now, 0.005); // Fast 5ms attack
+            }
+          } else if (speakingHoldFrames > 0) {
+            speakingHoldFrames--;
+            if (this.noiseGateGain) {
+              this.noiseGateGain.gain.setTargetAtTime(1.0, now, 0.01);
+            }
+          } else {
+            // Mute background noise
+            if (this.noiseGateGain) {
+              this.noiseGateGain.gain.setTargetAtTime(0.0001, now, 0.08); // 80ms smooth release
+            }
+          }
         } else {
-          speakingFrames = Math.max(speakingFrames - 1, 0);
+          // If noise suppression is off, leave gate open
+          if (this.noiseGateGain) {
+            this.noiseGateGain.gain.setTargetAtTime(1.0, now, 0.01);
+          }
         }
 
-        const calculatedIsSpeaking = speakingFrames > 3;
+        const calculatedIsSpeaking = voiceDetected || speakingHoldFrames > 0;
         if (calculatedIsSpeaking !== this.isSpeaking) {
           this.isSpeaking = calculatedIsSpeaking;
           this.onSpeakingChange(this.isSpeaking);
@@ -248,15 +466,53 @@ export class WebRtcVoiceEngine {
         this.animFrameId = requestAnimationFrame(checkVolume);
       };
 
+      if (this.animFrameId) {
+        cancelAnimationFrame(this.animFrameId);
+      }
       this.animFrameId = requestAnimationFrame(checkVolume);
     } catch (e) {
-      console.warn('[WebRTC-Debug] AudioContext speaking detection not initialized:', e);
+      console.warn('[WebRTC-Debug] DSP audio pipeline initialization error:', e);
     }
   }
 
-  // Play real-time PCM audio chunk received from server
+  // Check if native WebRTC P2P Opus audio is already streaming for a given user
+  hasActiveWebRtcAudio(userId: string): boolean {
+    const stream = appState.voiceState.remoteAudioStreams[userId];
+    if (stream && stream.getAudioTracks().some((t) => t.readyState === 'live' && t.enabled)) {
+      return true;
+    }
+    for (const chanId in appState.voiceState.roomParticipants) {
+      const list = appState.voiceState.roomParticipants[chanId];
+      const found = list.find((p) => p.userId === userId || p.peerId === userId);
+      if (found) {
+        if (found.peerId) {
+          const peerStream = appState.voiceState.remoteAudioStreams[found.peerId];
+          if (peerStream && peerStream.getAudioTracks().some((t) => t.readyState === 'live' && t.enabled)) {
+            return true;
+          }
+        }
+        if (found.userId) {
+          const userStream = appState.voiceState.remoteAudioStreams[found.userId];
+          if (userStream && userStream.getAudioTracks().some((t) => t.readyState === 'live' && t.enabled)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  // Play real-time PCM audio chunk received from server (fallback ONLY when WebRTC P2P is not connected)
   playRemoteAudioChunk(userId: string, base64Chunk: string, volume = 100) {
-    if (this.isDeafened) return;
+    if (this.isDeafened || volume <= 0) return;
+    if (userId === appState.currentUser.id) return;
+
+    // CRITICAL: If WebRTC P2P direct audio stream is active for this user, do NOT double-play WebSocket chunks!
+    // Double-playing causes echo and metallic comb-filtering robotic distortion.
+    if (this.hasActiveWebRtcAudio(userId)) {
+      return;
+    }
+
     try {
       if (!this.playbackContext || this.playbackContext.state === 'closed') {
         this.playbackContext = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -318,22 +574,57 @@ export class WebRtcVoiceEngine {
     }
 
     try {
-      console.log('[WebRTC-Debug] 🖥️ Solicitando compartilhamento de tela...');
+      const screenSettings = appState.screenShareSettings;
+      const res = screenSettings.resolution;
+      const fps = screenSettings.frameRate;
+
+      let widthConstraint: any = undefined;
+      let heightConstraint: any = undefined;
+      if (res === '720p') {
+        widthConstraint = { ideal: 1280, max: 1280 };
+        heightConstraint = { ideal: 720, max: 720 };
+      } else if (res === '1080p') {
+        widthConstraint = { ideal: 1920, max: 1920 };
+        heightConstraint = { ideal: 1080, max: 1080 };
+      } else if (res === '1440p') {
+        widthConstraint = { ideal: 2560, max: 2560 };
+        heightConstraint = { ideal: 1440, max: 1440 };
+      }
+
+      const videoConstraints: any = {
+        cursor: 'always',
+        displaySurface: 'monitor',
+        frameRate: { ideal: fps, max: fps },
+      };
+
+      if (widthConstraint && heightConstraint) {
+        videoConstraints.width = widthConstraint;
+        videoConstraints.height = heightConstraint;
+      }
+
+      console.log(`[WebRTC-Debug] 🖥️ Solicitando compartilhamento de tela (${res}, ${fps} FPS, áudio: ${screenSettings.includeAudio})...`);
       const screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          cursor: 'always',
-        } as any,
-        audio: true,
+        video: videoConstraints,
+        audio: screenSettings.includeAudio
+          ? ({
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+              channelCount: 2,
+              sampleRate: 48000,
+            } as any)
+          : false,
       });
 
       appState.voiceState.localScreenStream = screenStream;
       appState.voiceState.isScreenSharing = true;
+      appState.voiceState.watchingScreenId = 'local';
 
-      // Add screen tracks to all currently connected peers and renegotiate
+      // Add screen tracks (video and system audio) to all currently connected peers and renegotiate
       for (const [peerId, pc] of this.peerConnections.entries()) {
         const senders: RTCRtpSender[] = [];
         screenStream.getTracks().forEach((track) => {
-          console.log(`[WebRTC-Debug] ➕ Adicionando track de tela (${track.kind}) para peer ${peerId}`);
+          console.log(`[WebRTC-Debug] ➕ Adicionando track de transmissão (${track.kind}) para peer ${peerId}`);
           const sender = pc.addTrack(track, screenStream);
           senders.push(sender);
         });
@@ -341,10 +632,13 @@ export class WebRtcVoiceEngine {
         await this.renegotiatePeer(peerId);
       }
 
-      screenStream.getVideoTracks()[0].onended = () => {
-        console.log('[WebRTC-Debug] 🖥️ Compartilhamento de tela finalizado pelo usuário via navegador');
-        this.stopScreenShare();
-      };
+      const videoTrack = screenStream.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.onended = () => {
+          console.log('[WebRTC-Debug] 🖥️ Compartilhamento de tela finalizado pelo usuário via navegador');
+          this.stopScreenShare();
+        };
+      }
     } catch (e) {
       console.warn('[WebRTC-Debug] ❌ Falha ao iniciar compartilhamento de tela:', e);
       throw e;
@@ -358,6 +652,9 @@ export class WebRtcVoiceEngine {
       appState.voiceState.localScreenStream = null;
     }
     appState.voiceState.isScreenSharing = false;
+    if (appState.voiceState.watchingScreenId === 'local') {
+      appState.voiceState.watchingScreenId = null;
+    }
 
     // Remove screen senders from each peer connection and renegotiate
     for (const [peerId, pc] of this.peerConnections.entries()) {
@@ -607,9 +904,9 @@ export class WebRtcVoiceEngine {
     };
 
     pc.ontrack = (event) => {
-      console.log(`[WebRTC-Debug] 🎵 Track REMOTA recebida de ${peerId}! Kind: ${event.track.kind}`);
-      const remoteStream = event.streams && event.streams[0] ? event.streams[0] : new MediaStream([event.track]);
-      
+      console.log(`[WebRTC-Debug] 🎵 Track REMOTA recebida de ${peerId}! Kind: ${event.track.kind}, Track ID: ${event.track.id}`);
+      const incomingStream = event.streams && event.streams[0] ? event.streams[0] : null;
+
       let participantInfo = {
         peerId,
         userId: peerId,
@@ -633,24 +930,73 @@ export class WebRtcVoiceEngine {
 
       if (event.track.kind === 'video') {
         console.log(`[WebRTC-Debug] 📺 Registrando tela compartilhada remota de ${participantInfo.displayName}`);
+        const stream = incomingStream || new MediaStream([event.track]);
         appState.voiceState.remoteScreenStreams[peerId] = {
           peerId,
           userId: participantInfo.userId,
           displayName: participantInfo.displayName,
           avatar: participantInfo.avatar,
-          stream: remoteStream,
+          stream,
         };
+
+        if (appState.voiceState.watchingScreenId === null) {
+          appState.voiceState.watchingScreenId = peerId;
+        }
 
         event.track.onended = () => {
           console.log(`[WebRTC-Debug] 📺 Tela remota finalizada por ${peerId}`);
           delete appState.voiceState.remoteScreenStreams[peerId];
+          delete appState.voiceState.remoteScreenAudioStreams[peerId];
+          this.remoteScreenAudioTracks.delete(peerId);
+          if (appState.voiceState.watchingScreenId === peerId || appState.voiceState.watchingScreenId === participantInfo.userId) {
+            appState.voiceState.watchingScreenId = null;
+          }
         };
-      } else {
-        // Audio stream: store by peerId AND by userId for reliable reactive binding
-        console.log(`[WebRTC-Debug] 🔊 Vinculando stream de áudio para ${participantInfo.displayName} (${peerId})`);
-        appState.voiceState.remoteAudioStreams[peerId] = remoteStream;
-        if (participantInfo.userId && participantInfo.userId !== peerId) {
-          appState.voiceState.remoteAudioStreams[participantInfo.userId] = remoteStream;
+      } else if (event.track.kind === 'audio') {
+        // Track kind is 'audio'
+        const existingMicTrack = this.remoteMicTracks.get(peerId);
+        const existingScreen = appState.voiceState.remoteScreenStreams[peerId];
+
+        // Is this track screen audio?
+        // 1. It belongs to the same stream as video (or incomingStream has video tracks)
+        // 2. Or the stream id matches existingScreen
+        // 3. Or we already have a registered live mic track for this peer, so this new/second track is screen audio!
+        const isScreenAudio =
+          (incomingStream && incomingStream.getVideoTracks().length > 0) ||
+          (incomingStream && existingScreen && incomingStream.id === existingScreen.stream.id) ||
+          (existingMicTrack && existingMicTrack.id !== event.track.id && existingMicTrack.readyState === 'live');
+
+        if (isScreenAudio) {
+          console.log(`[WebRTC-Debug] 🔊 Áudio de transmissão de tela registrado para ${participantInfo.displayName}`);
+          this.remoteScreenAudioTracks.set(peerId, event.track);
+          const screenAudioStream = new MediaStream([event.track]);
+          appState.voiceState.remoteScreenAudioStreams[peerId] = screenAudioStream;
+          if (participantInfo.userId && participantInfo.userId !== peerId) {
+            appState.voiceState.remoteScreenAudioStreams[participantInfo.userId] = screenAudioStream;
+          }
+
+          event.track.onended = () => {
+            console.log(`[WebRTC-Debug] 🔊 Áudio de tela finalizado para ${peerId}`);
+            delete appState.voiceState.remoteScreenAudioStreams[peerId];
+            if (participantInfo.userId && participantInfo.userId !== peerId) {
+              delete appState.voiceState.remoteScreenAudioStreams[participantInfo.userId];
+            }
+            this.remoteScreenAudioTracks.delete(peerId);
+          };
+        } else {
+          // Microphone audio stream
+          console.log(`[WebRTC-Debug] 🎙️ Áudio de microfone registrado para ${participantInfo.displayName} (${peerId})`);
+          this.remoteMicTracks.set(peerId, event.track);
+          const micAudioStream = new MediaStream([event.track]);
+          appState.voiceState.remoteAudioStreams[peerId] = micAudioStream;
+          if (participantInfo.userId && participantInfo.userId !== peerId) {
+            appState.voiceState.remoteAudioStreams[participantInfo.userId] = micAudioStream;
+          }
+
+          event.track.onended = () => {
+            console.log(`[WebRTC-Debug] 🎙️ Microfone finalizado para ${peerId}`);
+            this.remoteMicTracks.delete(peerId);
+          };
         }
       }
     };
@@ -688,11 +1034,18 @@ export class WebRtcVoiceEngine {
     this.isMakingOfferMap.delete(peerId);
     this.ignoreOfferMap.delete(peerId);
     this.screenSenders.delete(peerId);
+    this.remoteMicTracks.delete(peerId);
+    this.remoteScreenAudioTracks.delete(peerId);
     delete appState.voiceState.remoteAudioStreams[peerId];
     delete appState.voiceState.remoteScreenStreams[peerId];
+    delete appState.voiceState.remoteScreenAudioStreams[peerId];
+    if (appState.voiceState.watchingScreenId === peerId) {
+      appState.voiceState.watchingScreenId = null;
+    }
   }
 
   cleanup() {
+    appState.voiceState.watchingScreenId = null;
     if (this.animFrameId) {
       cancelAnimationFrame(this.animFrameId);
       this.animFrameId = null;
@@ -720,6 +1073,16 @@ export class WebRtcVoiceEngine {
     }
     this.userAudioStates.clear();
 
+    if (this.rawMicStream) {
+      this.rawMicStream.getTracks().forEach((track) => track.stop());
+      this.rawMicStream = null;
+    }
+
+    if (this.processedStream) {
+      this.processedStream.getTracks().forEach((track) => track.stop());
+      this.processedStream = null;
+    }
+
     if (this.localStream) {
       this.localStream.getTracks().forEach((track) => track.stop());
       this.localStream = null;
@@ -741,11 +1104,14 @@ export class WebRtcVoiceEngine {
     this.isMakingOfferMap.clear();
     this.ignoreOfferMap.clear();
     this.screenSenders.clear();
+    this.remoteMicTracks.clear();
+    this.remoteScreenAudioTracks.clear();
     this.lastIceRestartMap.clear();
     this.iceRestartAttemptsMap.clear();
 
     appState.voiceState.remoteAudioStreams = {};
     appState.voiceState.remoteScreenStreams = {};
+    appState.voiceState.remoteScreenAudioStreams = {};
 
     this.isSpeaking = false;
     this.onSpeakingChange(false);

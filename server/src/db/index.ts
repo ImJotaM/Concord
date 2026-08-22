@@ -84,7 +84,21 @@ export function initDatabase() {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS direct_messages (
+      id TEXT PRIMARY KEY,
+      channel_id TEXT NOT NULL,
+      sender_id TEXT NOT NULL,
+      recipient_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      attachments TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (recipient_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_dm_channel ON direct_messages(channel_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_dm_users ON direct_messages(sender_id, recipient_id);
     CREATE INDEX IF NOT EXISTS idx_channels_server ON channels(server_id, position);
     CREATE INDEX IF NOT EXISTS idx_roles_server ON roles(server_id, position);
   `);

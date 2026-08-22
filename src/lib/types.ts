@@ -51,6 +51,8 @@ export interface BrowserTab {
   url: string;
   favicon?: string;
   isLoading?: boolean;
+  history?: string[];
+  historyIndex?: number;
 }
 
 export interface MessageAttachment {
@@ -89,6 +91,8 @@ export interface VoicePeer {
   avatar: string;
   isSpeaking?: boolean;
   isScreenSharing?: boolean;
+  isMuted?: boolean;
+  isDeafened?: boolean;
   audioStream?: MediaStream;
 }
 
@@ -100,6 +104,8 @@ export interface VoiceParticipant {
   avatar: string;
   isSpeaking?: boolean;
   isScreenSharing?: boolean;
+  isMuted?: boolean;
+  isDeafened?: boolean;
 }
 
 export interface RemoteScreen {
@@ -117,4 +123,62 @@ export interface AudioSettings {
   noiseSuppression: boolean;
   autoGainControl: boolean;
   sensitivity: number;
+}
+
+export interface ScreenShareSettings {
+  resolution: '720p' | '1080p' | '1440p' | 'source';
+  frameRate: 15 | 30 | 60;
+  qualityMode: 'smooth' | 'detail';
+  includeAudio: boolean;
+}
+
+export interface DirectMessage {
+  id: string;
+  channelId: string;
+  senderId: string;
+  recipientId: string;
+  content: string;
+  attachments?: (string | MessageAttachment)[];
+  createdAt: string;
+  sender?: User;
+  recipient?: User;
+}
+
+export interface DirectMessageConversation {
+  id: string;
+  userId: string;
+  user: User;
+  lastMessage?: {
+    content: string;
+    createdAt: string;
+    senderId: string;
+  };
+  unreadCount: number;
+  updatedAt: string;
+}
+
+export interface InAppNotification {
+  id: string;
+  senderName: string;
+  senderAvatar?: string;
+  senderUserId?: string;
+  locationType: 'channel' | 'dm';
+  channelId?: string;
+  channelName?: string;
+  serverId?: string;
+  serverName?: string;
+  title: string;
+  subtitle?: string;
+  body: string;
+  avatar?: string;
+  userId?: string;
+  isDm?: boolean;
+  timestamp: number;
+}
+
+export interface NotificationSettings {
+  enableSounds: boolean;
+  enableDesktop: boolean;
+  enableInAppToast: boolean;
+  notifyAllMessages: boolean;
 }

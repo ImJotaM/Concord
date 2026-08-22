@@ -2,8 +2,9 @@
   import { appState } from '../stores/appState.svelte';
   import { clientService } from '../api/wsClient';
   import type { User } from '../types';
-  import { Shield, ShieldAlert, UserMinus, Trash2, X, Check } from '@lucide/svelte';
+  import { Shield, ShieldAlert, UserMinus, Trash2, X, Check, MessageSquare } from '@lucide/svelte';
   import { getAvatarUrl, ICONS8_ICONS } from '../utils/icons8';
+  import Avatar from './Avatar.svelte';
 
   const statusColors: Record<string, string> = {
     online: 'bg-[#23a55a]',
@@ -89,9 +90,12 @@
               class="w-full flex items-center space-x-2.5 px-2 py-1.5 rounded-[4px] hover:bg-[#16171a] transition-colors cursor-pointer group text-left"
             >
               <div class="relative shrink-0">
-                <div class="w-8 h-8 rounded-full bg-[#16171a] flex items-center justify-center p-1 shadow-sm border border-[#232428]/40 overflow-hidden">
-                  <img src={getAvatarUrl(user.avatar)} alt={user.displayName} class="w-full h-full object-contain" loading="lazy" />
-                </div>
+                <Avatar
+                  name={user.displayName || user.username}
+                  avatar={user.avatar}
+                  userId={user.id}
+                  size="md"
+                />
                 <div
                   class="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full ring-2 ring-[#111214] {statusColors[
                     user.status || 'online'
@@ -146,9 +150,12 @@
               class="w-full flex items-center space-x-2.5 px-2 py-1.5 rounded-[4px] hover:bg-[#16171a] transition-colors cursor-pointer group text-left"
             >
               <div class="relative shrink-0">
-                <div class="w-8 h-8 rounded-full bg-[#16171a] flex items-center justify-center p-1 grayscale shadow-sm border border-[#232428]/40 overflow-hidden">
-                  <img src={getAvatarUrl(user.avatar)} alt={user.displayName} class="w-full h-full object-contain" loading="lazy" />
-                </div>
+                <Avatar
+                  name={user.displayName || user.username}
+                  avatar={user.avatar}
+                  userId={user.id}
+                  size="md"
+                />
                 <div class="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full ring-2 ring-[#111214] bg-[#80848e]"></div>
               </div>
 
@@ -205,8 +212,14 @@
         <!-- Avatar overlapping banner -->
         <div class="flex items-end justify-between -mt-9">
           <div class="relative">
-            <div class="w-16 h-16 rounded-2xl bg-[#16171a] flex items-center justify-center p-2 shadow-xl ring-4 ring-[#111214] border border-[#232428] overflow-hidden">
-              <img src={getAvatarUrl(user.avatar)} alt={user.displayName} class="w-full h-full object-contain" />
+            <div class="rounded-2xl ring-4 ring-[#111214] shadow-xl overflow-hidden">
+              <Avatar
+                name={user.displayName || user.username}
+                avatar={user.avatar}
+                userId={user.id}
+                size="xl"
+                shape="rounded"
+              />
             </div>
             <div
               class="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full ring-2 ring-[#111214] {statusColors[
@@ -249,6 +262,20 @@
             <span class="text-[#949ba4] block text-[10px] font-bold uppercase mb-0.5">Status</span>
             {user.customStatus}
           </div>
+        {/if}
+
+        {#if !isSelf && user.id !== 'user-system'}
+          <button
+            type="button"
+            onclick={() => {
+              appState.openDm(user.id);
+              selectedUser = null;
+            }}
+            class="w-full bg-[#5865f2] hover:bg-[#4752c4] text-white py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center space-x-2 transition-all cursor-pointer shadow hover:shadow-[#5865f2]/30 active:scale-95"
+          >
+            <MessageSquare class="w-4 h-4" />
+            <span>Enviar Mensagem Privada</span>
+          </button>
         {/if}
 
         <!-- Roles Section -->
