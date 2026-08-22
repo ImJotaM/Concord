@@ -1,8 +1,9 @@
-import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 
+const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -16,7 +17,52 @@ if (!fs.existsSync(dataDir)) {
 }
 
 const dbPath = path.join(dataDir, 'concord.db');
-export const db = new Database(dbPath);
+
+export interface DatabaseAdapter {
+  exec(sql: string): void;
+  prepare(sql: string): {
+    run(...params: any[]): { changes: number | bigint; lastInsertRowid: number | bigint };
+    get(...params: any[]): any;
+    all(...params: any[]): any[];
+  };
+  pragma(sql: string): any;
+}
+
+function createDatabase(filePath: string): DatabaseAdapter {
+  // 1. Try built-in native node:sqlite first (Node 22+, zero native .node ABI issues across all versions)
+  try {
+    const { DatabaseSync } = require('node:sqlite');
+    const rawDb = new DatabaseSync(filePath);
+    return {
+      exec: (sql: string) => rawDb.exec(sql),
+      prepare: (sql: string) => {
+        const stmt = rawDb.prepare(sql);
+        return {
+          run: (...params: any[]) => stmt.run(...params),
+          get: (...params: any[]) => stmt.get(...params),
+          all: (...params: any[]) => stmt.all(...params),
+        };
+      },
+      pragma: (pragmaStr: string) => rawDb.exec(`PRAGMA ${pragmaStr};`),
+    };
+  } catch {}
+
+  // 2. Fallback to better-sqlite3 if node:sqlite is not present
+  try {
+    const BetterSqlite = require('better-sqlite3');
+    const rawDb = new BetterSqlite(filePath);
+    return {
+      exec: (sql: string) => rawDb.exec(sql),
+      prepare: (sql: string) => rawDb.prepare(sql),
+      pragma: (pragmaStr: string) => rawDb.pragma(pragmaStr),
+    };
+  } catch (err: any) {
+    console.error('Failed to initialize SQLite driver:', err);
+    throw new Error(`Não foi possível inicializar o banco de dados SQLite: ${err?.message || err}`);
+  }
+}
+
+export const db: DatabaseAdapter = createDatabase(dbPath);
 
 // Enable WAL mode for high concurrency
 db.pragma('journal_mode = WAL');
