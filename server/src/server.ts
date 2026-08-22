@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import http from 'http';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { WebSocketServer } from 'ws';
 import { initDatabase } from './db/index.js';
@@ -41,8 +42,6 @@ app.use(
     },
   })
 );
-
-import fs from 'fs';
 
 // API routes
 app.use('/api', apiRouter);

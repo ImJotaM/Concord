@@ -49,7 +49,7 @@ fn resolve_server_execution(app: &AppHandle) -> Option<(PathBuf, Command)> {
         candidate_dirs.push(res_dir);
     }
 
-    // 2. Executable Parent Directory (Portable exe / Installed folder)
+    // 2. Executable Directory (Portable exe / Installed folder)
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
             candidate_dirs.push(exe_dir.join("resources").join("server"));
@@ -57,30 +57,45 @@ fn resolve_server_execution(app: &AppHandle) -> Option<(PathBuf, Command)> {
         }
     }
 
-    // 3. Local Development Workspace
+    // 3. User AppData / LocalData Directory
+    if let Ok(app_data) = app.path().app_data_dir() {
+        candidate_dirs.push(app_data.join("server"));
+    }
+
+    // 4. Local Development Workspace
     let project_root = find_project_root();
     candidate_dirs.push(project_root.join("src-tauri").join("resources").join("server"));
     candidate_dirs.push(project_root.join("server"));
 
     // Check each candidate directory for dist/server.js or server.js
     for dir in candidate_dirs {
-        let server_js_path = if dir.join("dist").join("server.js").exists() {
-            Some(dir.join("dist").join("server.js"))
-        } else if dir.join("server.js").exists() {
-            Some(dir.join("server.js"))
-        } else {
-            None
-        };
+        if !dir.is_dir() {
+            continue;
+        }
 
-        if let Some(script) = server_js_path {
+        if dir.join("dist").join("server.js").is_file() {
             let mut cmd = Command::new("node");
-            cmd.arg(&script);
+            cmd.arg("dist/server.js");
             cmd.current_dir(&dir);
-            cmd.env("NODE_PATH", dir.join("node_modules"));
+            let node_modules_dir = dir.join("node_modules");
+            if node_modules_dir.is_dir() {
+                cmd.env("NODE_PATH", &node_modules_dir);
+            }
             return Some((dir, cmd));
         }
 
-        if dir.join("src").join("server.ts").exists() {
+        if dir.join("server.js").is_file() {
+            let mut cmd = Command::new("node");
+            cmd.arg("server.js");
+            cmd.current_dir(&dir);
+            let node_modules_dir = dir.join("node_modules");
+            if node_modules_dir.is_dir() {
+                cmd.env("NODE_PATH", &node_modules_dir);
+            }
+            return Some((dir, cmd));
+        }
+
+        if dir.join("src").join("server.ts").is_file() {
             let mut cmd = if cfg!(target_os = "windows") {
                 let mut c = Command::new("cmd");
                 c.args(&["/C", "npm", "run", "dev"]);
