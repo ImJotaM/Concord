@@ -41,10 +41,11 @@ jobs:
           npm ci
           npm --prefix server ci
 
-      - name: Build server and frontend
+      - name: Build server, frontend and bundle resources
         run: |
           npm --prefix server run build
           npm run build
+          node scripts/prepare-tauri-resources.cjs
 
       - name: Build Tauri Desktop App & Create GitHub Release
         uses: tauri-apps/tauri-action@v0
