@@ -7,6 +7,7 @@
   import ChannelSidebar from './lib/components/ChannelSidebar.svelte';
   import ChatArea from './lib/components/ChatArea.svelte';
   import VoiceRoomView from './lib/components/VoiceRoomView.svelte';
+  import WebBrowserView from './lib/components/WebBrowserView.svelte';
   import MemberList from './lib/components/MemberList.svelte';
   import DiscoveryModal from './lib/components/Modals/DiscoveryModal.svelte';
   import CreateChannelModal from './lib/components/Modals/CreateChannelModal.svelte';
@@ -14,6 +15,7 @@
   import UserSettingsModal from './lib/components/Modals/UserSettingsModal.svelte';
   import HostServerModal from './lib/components/Modals/HostServerModal.svelte';
   import MicPermissionModal from './lib/components/Modals/MicPermissionModal.svelte';
+  import ServerRolesModal from './lib/components/Modals/ServerRolesModal.svelte';
 
   let showMembers = $state(true);
 
@@ -35,9 +37,11 @@
   <!-- 2. Channels Sidebar -->
   <ChannelSidebar />
 
-  <!-- 3. Main Center Workspace (Text Chat or Voice Grid) -->
+  <!-- 3. Main Center Workspace (In-App Web Browser, Voice Room, or Text Chat) -->
   <div class="flex-1 flex h-full overflow-hidden">
-    {#if isVoiceChannel && currentChannel}
+    {#if appState.currentView === 'browser'}
+      <WebBrowserView />
+    {:else if isVoiceChannel && currentChannel}
       <VoiceRoomView channelId={currentChannel.id} />
     {:else}
       <ChatArea
@@ -46,8 +50,8 @@
       />
     {/if}
 
-    <!-- 4. Right Member List (for text channels) -->
-    {#if showMembers && !isVoiceChannel}
+    <!-- 4. Right Member List (for text channels when not in browser) -->
+    {#if appState.currentView !== 'browser' && showMembers && !isVoiceChannel}
       <MemberList />
     {/if}
   </div>
@@ -65,5 +69,7 @@
     <CreateServerModal />
   {:else if appState.activeModal === 'settings'}
     <UserSettingsModal />
+  {:else if appState.activeModal === 'serverRoles'}
+    <ServerRolesModal />
   {/if}
 </main>

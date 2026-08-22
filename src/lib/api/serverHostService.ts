@@ -45,7 +45,6 @@ export class ServerHostService {
       clearTimeout(timeout);
       if (res.ok) {
         const data = await res.json();
-        appState.localServerRunning = true;
         if (data.localIps && Array.isArray(data.localIps)) {
           appState.lanIps = data.localIps;
         }

@@ -45,3 +45,7 @@ src-tauri/gen/
 # OS System Files
 .DS_Store
 Thumbs.db
+
+
+# MCPs files
+.playwright-mcp

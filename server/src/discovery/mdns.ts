@@ -16,6 +16,16 @@ export function getLocalIpAddresses(): string[] {
       }
     }
   }
+
+  // Prioritize Wi-Fi / Ethernet subnets (192.168.x.x, 10.x.x.x, 172.x.x.x) over VPNs
+  addresses.sort((a, b) => {
+    const isALan = a.startsWith('192.168.') || a.startsWith('10.');
+    const isBLan = b.startsWith('192.168.') || b.startsWith('10.');
+    if (isALan && !isBLan) return -1;
+    if (!isALan && isBLan) return 1;
+    return 0;
+  });
+
   return addresses;
 }
 

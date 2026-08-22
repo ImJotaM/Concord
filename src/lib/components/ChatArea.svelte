@@ -15,6 +15,13 @@
     Compass,
     AlertCircle,
     WifiOff,
+    Globe,
+    Download,
+    Film,
+    Music,
+    FileText,
+    FileArchive,
+    Trash2,
   } from '@lucide/svelte';
   import { tick } from 'svelte';
 
@@ -92,7 +99,7 @@
     try {
       const fileUrl = await clientService.uploadFile(file);
       if (fileUrl) {
-        clientService.sendMessage(appState.currentChannelId, file.type.startsWith('image/') ? 'Shared an image' : `Uploaded ${file.name}`, [
+        clientService.sendMessage(appState.currentChannelId, file.type.startsWith('image/') ? 'Shared an image' : (file.type.startsWith('video/') ? 'Shared a video' : `Uploaded ${file.name}`), [
           fileUrl,
         ]);
       }
@@ -108,6 +115,63 @@
       return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     } catch {
       return '';
+    }
+  }
+
+  function getFullAttachmentUrl(urlOrPath: string): string {
+    if (!urlOrPath) return '';
+    const uploadsIndex = urlOrPath.indexOf('/uploads/');
+    if (uploadsIndex !== -1) {
+      const relativePath = urlOrPath.substring(uploadsIndex);
+      return `${appState.serverUrl}${relativePath}`;
+    }
+    if (urlOrPath.startsWith('http://') || urlOrPath.startsWith('https://')) {
+      return urlOrPath;
+    }
+    return `${appState.serverUrl}${urlOrPath.startsWith('/') ? '' : '/'}${urlOrPath}`;
+  }
+
+  function getFilename(urlOrPath: string): string {
+    try {
+      const clean = urlOrPath.split('?')[0];
+      const parts = clean.split('/');
+      const last = parts[parts.length - 1];
+      return decodeURIComponent(last) || 'arquivo';
+    } catch {
+      return 'arquivo';
+    }
+  }
+
+  function isImageUrl(url: string): boolean {
+    return /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico)$/i.test(url);
+  }
+
+  function isVideoUrl(url: string): boolean {
+    return /\.(mp4|webm|mov|mkv|avi|ogv)$/i.test(url);
+  }
+
+  function isAudioUrl(url: string): boolean {
+    return /\.(mp3|wav|ogg|flac|m4a|aac|opus)$/i.test(url);
+  }
+
+  async function downloadAttachment(url: string, suggestedFilename?: string) {
+    const fullUrl = getFullAttachmentUrl(url);
+    const filename = suggestedFilename || getFilename(url);
+    try {
+      const res = await fetch(fullUrl);
+      if (!res.ok) throw new Error('Download request failed');
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+    } catch (e) {
+      console.warn('Fallback download opening link:', e);
+      window.open(fullUrl, '_blank');
     }
   }
 </script>
@@ -132,16 +196,16 @@
       <!-- Quick Host Server Button in Top Header -->
       <button
         onclick={() => (appState.activeModal = 'hostServer')}
-        class="bg-[#2b2d31] hover:bg-[#35373c] text-xs font-semibold px-3 py-1.5 rounded-md text-[#dbdee1] hover:text-white transition-colors flex items-center space-x-1.5 border border-[#1f2023]"
+        class="bg-[#2b2d31] hover:bg-[#35373c] text-xs font-semibold px-3 py-1.5 rounded-md text-[#dbdee1] hover:text-white transition-colors flex items-center space-x-1.5 border border-[#1f2023] cursor-pointer"
         title="Host Local Server Controls"
       >
-        <Server class="w-3.5 h-3.5 text-[#5865f2]" />
+        <Server class="w-3.5 h-3.5 text-[#23a55a]" />
         <span>Host Server</span>
       </button>
 
       <button
         onclick={toggleMembers}
-        class={`p-1.5 rounded hover:bg-[#35373c] text-[#b5bac1] hover:text-white transition-colors ${showMembers ? 'text-white bg-[#35373c]' : ''}`}
+        class={`p-1.5 rounded hover:bg-[#35373c] text-[#b5bac1] hover:text-white transition-colors ${showMembers ? 'text-white bg-[#35373c]' : ''} cursor-pointer`}
         title="Toggle Member List"
       >
         <Users class="w-5 h-5" />
@@ -181,7 +245,7 @@
   {/if}
 
   <!-- Messages List -->
-  <div bind:this={messagesContainer} class="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+  <div bind:this={messagesContainer} class="flex-1 overflow-y-auto px-4 py-3">
     {#if !isConnected && (!currentChannel || currentMessages.length === 0)}
       <!-- Disconnected Welcome Dashboard -->
       <div class="h-full flex flex-col items-center justify-center text-center p-6 max-w-lg mx-auto">
@@ -237,23 +301,54 @@
     {:else}
       {#each currentMessages as message, i (message.id)}
         {@const prev = currentMessages[i - 1]}
-        {@const isSequence = prev && prev.userId === message.userId && new Date(message.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60 * 1000}
+        {@const prevUserId = prev ? (prev.userId || prev.user?.id) : null}
+        {@const currentUserId = message.userId || message.user?.id}
+        {@const isSequence = !!prev && prevUserId === currentUserId && (new Date(message.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60 * 1000)}
 
-        <div class="flex items-start space-x-4 hover:bg-[#2e3035] -mx-4 px-4 py-1 rounded transition-colors group">
+        {@const isAuthor = currentUserId === appState.currentUser.id}
+        {@const canDelete = isAuthor || appState.canManageMessages || appState.isCurrentUserAdmin || appState.isCurrentUserOwner}
+
+        <div
+          class="flex items-start space-x-3.5 hover:bg-[#2e3035]/60 -mx-4 px-4 rounded-[4px] transition-colors group relative"
+          class:mt-3.5={!isSequence && i > 0}
+          class:mt-0.5={!isSequence && i === 0}
+          class:mt-[1px]={isSequence}
+          class:py-1={!isSequence}
+          class:py-[2px]={isSequence}
+        >
+          <!-- Floating Action Toolbar on Hover (Delete Message) -->
+          {#if canDelete}
+            <div class="absolute right-4 -top-3 hidden group-hover:flex items-center bg-[#313338] border border-[#232428] rounded-md shadow-md py-0.5 px-1 space-x-1 z-10">
+              <button
+                type="button"
+                onclick={() => {
+                  if (confirm('Tem certeza que deseja apagar esta mensagem?')) {
+                    clientService.deleteMessage(message.id, message.channelId);
+                  }
+                }}
+                class="p-1 hover:bg-[#da373c] text-[#949ba4] hover:text-white rounded transition-colors cursor-pointer"
+                title={isAuthor ? 'Apagar minha mensagem' : 'Apagar mensagem (Moderação)'}
+              >
+                <Trash2 class="w-3.5 h-3.5" />
+              </button>
+            </div>
+          {/if}
+
           {#if !isSequence}
-            <div class="w-10 h-10 rounded-full bg-[#1e1f22] flex items-center justify-center text-lg shrink-0 mt-0.5 select-none shadow-sm">
+            <!-- First message in block: Avatar + Header + Body -->
+            <div class="w-10 h-10 rounded-full bg-[#1e1f22] flex items-center justify-center text-lg shrink-0 mt-0.5 select-none shadow-sm cursor-pointer hover:opacity-90">
               <span>{message.user?.avatar || '👤'}</span>
             </div>
-            <div class="flex-1 overflow-hidden">
-              <div class="flex items-baseline space-x-2">
-                <span class="text-white font-medium text-sm hover:underline cursor-pointer">
+            <div class="flex-1 overflow-hidden min-w-0">
+              <div class="flex items-baseline space-x-2 leading-none mb-1">
+                <span class="text-white font-semibold text-sm hover:underline cursor-pointer">
                   {message.user?.displayName || message.user?.username || 'User'}
                 </span>
-                <span class="text-[11px] text-[#949ba4]">
+                <span class="text-[11px] text-[#949ba4] font-normal">
                   {formatTime(message.createdAt)}
                 </span>
               </div>
-              <div class="text-[#dbdee1] text-sm leading-relaxed break-words whitespace-pre-wrap select-text">
+              <div class="text-[#dbdee1] text-sm leading-[1.375rem] break-words whitespace-pre-wrap select-text">
                 {message.content}
               </div>
 
@@ -261,59 +356,163 @@
               {#if message.attachments && message.attachments.length > 0}
                 <div class="mt-2 space-y-2">
                   {#each message.attachments as att}
-                    {@const attUrl = typeof att === 'string' ? att : att.url}
-                    {#if attUrl.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i)}
+                    {@const rawUrl = typeof att === 'string' ? att : att.url}
+                    {@const fullUrl = getFullAttachmentUrl(rawUrl)}
+                    {@const filename = typeof att === 'object' && att.filename ? att.filename : getFilename(rawUrl)}
+
+                    {#if isImageUrl(rawUrl)}
                       <button
                         type="button"
                         class="block p-0 border-0 bg-transparent cursor-pointer"
-                        onclick={() => window.open(attUrl.startsWith('http') ? attUrl : `${appState.serverUrl}${attUrl}`, '_blank')}
+                        onclick={() => window.open(fullUrl, '_blank')}
                       >
                         <img
-                          src={attUrl.startsWith('http') ? attUrl : `${appState.serverUrl}${attUrl}`}
-                          alt="attachment"
-                          class="max-w-md max-h-80 rounded-lg shadow border border-[#1f2023] hover:opacity-95 transition-opacity"
+                          src={fullUrl}
+                          alt={filename}
+                          class="max-w-md max-h-80 rounded-lg shadow-md border border-[#1f2023] hover:opacity-95 transition-opacity object-contain bg-[#1e1f22]"
+                          loading="lazy"
                         />
                       </button>
+                    {:else if isVideoUrl(rawUrl)}
+                      <div class="max-w-md my-1.5">
+                        <!-- svelte-ignore a11y_media_has_caption -->
+                        <video
+                          src={fullUrl}
+                          controls
+                          playsinline
+                          preload="metadata"
+                          class="max-w-full max-h-80 rounded-lg shadow-md border border-[#1f2023] bg-black"
+                        ></video>
+                      </div>
+                    {:else if isAudioUrl(rawUrl)}
+                      <div class="max-w-md my-1.5 bg-[#2b2d31] p-2.5 rounded-lg border border-[#1f2023]">
+                        <div class="text-xs text-[#dbdee1] font-semibold mb-1 flex items-center space-x-1.5 truncate">
+                          <Music class="w-3.5 h-3.5 text-[#5865f2] shrink-0" />
+                          <span class="truncate">{filename}</span>
+                        </div>
+                        <!-- svelte-ignore a11y_media_has_caption -->
+                        <audio src={fullUrl} controls preload="metadata" class="w-full h-8"></audio>
+                      </div>
                     {:else}
-                      <a
-                        href={attUrl.startsWith('http') ? attUrl : `${appState.serverUrl}${attUrl}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        class="inline-flex items-center space-x-2 bg-[#2b2d31] hover:bg-[#35373c] p-2.5 rounded-md text-xs text-[#00a8fc] border border-[#1f2023] transition-colors"
-                      >
-                        <Paperclip class="w-4 h-4" />
-                        <span>Download Attachment</span>
-                      </a>
+                      <!-- Discord-style File Card with direct download -->
+                      <div class="flex items-center justify-between bg-[#2b2d31] hover:bg-[#35373c] px-3.5 py-3 rounded-lg border border-[#1f2023] max-w-md my-1.5 transition-colors group/card">
+                        <div class="flex items-center space-x-3 truncate min-w-0 mr-3">
+                          <div class="w-10 h-10 rounded-lg bg-[#1e1f22] flex items-center justify-center text-[#5865f2] shrink-0 shadow-inner">
+                            {#if filename.match(/\.(zip|rar|7z|tar|gz)$/i)}
+                              <FileArchive class="w-5 h-5 text-[#f0b232]" />
+                            {:else if filename.match(/\.(pdf|doc|docx|txt|md)$/i)}
+                              <FileText class="w-5 h-5 text-[#23a55a]" />
+                            {:else}
+                              <Paperclip class="w-5 h-5 text-[#5865f2]" />
+                            {/if}
+                          </div>
+                          <div class="truncate min-w-0">
+                            <div class="text-sm font-semibold text-[#00a8fc] group-hover/card:underline truncate" title={filename}>
+                              {filename}
+                            </div>
+                            <div class="text-[11px] text-[#949ba4]">
+                              Clique para baixar
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onclick={() => downloadAttachment(rawUrl, filename)}
+                          class="bg-[#1e1f22] hover:bg-[#5865f2] text-[#dbdee1] hover:text-white p-2 rounded-md transition-colors cursor-pointer shrink-0 shadow"
+                          title="Baixar Arquivo"
+                        >
+                          <Download class="w-4 h-4" />
+                        </button>
+                      </div>
                     {/if}
                   {/each}
                 </div>
               {/if}
             </div>
           {:else}
-            <!-- Grouped continuation message -->
-            <div class="w-10 text-[10px] text-[#949ba4] text-right shrink-0 opacity-0 group-hover:opacity-100 select-none">
+            <!-- Continuation message: Hidden timestamp in gutter + direct aligned text -->
+            <div class="w-10 text-[10px] text-[#949ba4] text-right shrink-0 opacity-0 group-hover:opacity-100 select-none pr-1 pt-[2px] leading-tight">
               {formatTime(message.createdAt)}
             </div>
-            <div class="flex-1 overflow-hidden">
-              <div class="text-[#dbdee1] text-sm leading-relaxed break-words whitespace-pre-wrap select-text">
+            <div class="flex-1 overflow-hidden min-w-0">
+              <div class="text-[#dbdee1] text-sm leading-[1.375rem] break-words whitespace-pre-wrap select-text">
                 {message.content}
               </div>
+
+              <!-- Attachments in continuation -->
               {#if message.attachments && message.attachments.length > 0}
                 <div class="mt-2 space-y-2">
                   {#each message.attachments as att}
-                    {@const attUrl = typeof att === 'string' ? att : att.url}
-                    {#if attUrl.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i)}
+                    {@const rawUrl = typeof att === 'string' ? att : att.url}
+                    {@const fullUrl = getFullAttachmentUrl(rawUrl)}
+                    {@const filename = typeof att === 'object' && att.filename ? att.filename : getFilename(rawUrl)}
+
+                    {#if isImageUrl(rawUrl)}
                       <button
                         type="button"
                         class="block p-0 border-0 bg-transparent cursor-pointer"
-                        onclick={() => window.open(attUrl.startsWith('http') ? attUrl : `${appState.serverUrl}${attUrl}`, '_blank')}
+                        onclick={() => window.open(fullUrl, '_blank')}
                       >
                         <img
-                          src={attUrl.startsWith('http') ? attUrl : `${appState.serverUrl}${attUrl}`}
-                          alt="attachment"
-                          class="max-w-md max-h-80 rounded-lg shadow border border-[#1f2023]"
+                          src={fullUrl}
+                          alt={filename}
+                          class="max-w-md max-h-80 rounded-lg shadow-md border border-[#1f2023] hover:opacity-95 transition-opacity object-contain bg-[#1e1f22]"
+                          loading="lazy"
                         />
                       </button>
+                    {:else if isVideoUrl(rawUrl)}
+                      <div class="max-w-md my-1.5">
+                        <!-- svelte-ignore a11y_media_has_caption -->
+                        <video
+                          src={fullUrl}
+                          controls
+                          playsinline
+                          preload="metadata"
+                          class="max-w-full max-h-80 rounded-lg shadow-md border border-[#1f2023] bg-black"
+                        ></video>
+                      </div>
+                    {:else if isAudioUrl(rawUrl)}
+                      <div class="max-w-md my-1.5 bg-[#2b2d31] p-2.5 rounded-lg border border-[#1f2023]">
+                        <div class="text-xs text-[#dbdee1] font-semibold mb-1 flex items-center space-x-1.5 truncate">
+                          <Music class="w-3.5 h-3.5 text-[#5865f2] shrink-0" />
+                          <span class="truncate">{filename}</span>
+                        </div>
+                        <!-- svelte-ignore a11y_media_has_caption -->
+                        <audio src={fullUrl} controls preload="metadata" class="w-full h-8"></audio>
+                      </div>
+                    {:else}
+                      <!-- Discord-style File Card with direct download -->
+                      <div class="flex items-center justify-between bg-[#2b2d31] hover:bg-[#35373c] px-3.5 py-3 rounded-lg border border-[#1f2023] max-w-md my-1.5 transition-colors group/card">
+                        <div class="flex items-center space-x-3 truncate min-w-0 mr-3">
+                          <div class="w-10 h-10 rounded-lg bg-[#1e1f22] flex items-center justify-center text-[#5865f2] shrink-0 shadow-inner">
+                            {#if filename.match(/\.(zip|rar|7z|tar|gz)$/i)}
+                              <FileArchive class="w-5 h-5 text-[#f0b232]" />
+                            {:else if filename.match(/\.(pdf|doc|docx|txt|md)$/i)}
+                              <FileText class="w-5 h-5 text-[#23a55a]" />
+                            {:else}
+                              <Paperclip class="w-5 h-5 text-[#5865f2]" />
+                            {/if}
+                          </div>
+                          <div class="truncate min-w-0">
+                            <div class="text-sm font-semibold text-[#00a8fc] group-hover/card:underline truncate" title={filename}>
+                              {filename}
+                            </div>
+                            <div class="text-[11px] text-[#949ba4]">
+                              Clique para baixar
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onclick={() => downloadAttachment(rawUrl, filename)}
+                          class="bg-[#1e1f22] hover:bg-[#5865f2] text-[#dbdee1] hover:text-white p-2 rounded-md transition-colors cursor-pointer shrink-0 shadow"
+                          title="Baixar Arquivo"
+                        >
+                          <Download class="w-4 h-4" />
+                        </button>
+                      </div>
                     {/if}
                   {/each}
                 </div>

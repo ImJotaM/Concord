@@ -113,3 +113,77 @@ apiRouter.post('/users/:userId', (req, res) => {
   const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   res.json(updated);
 });
+
+// In-App Web Proxy Endpoint (bypasses X-Frame-Options and injects base tags)
+apiRouter.get('/proxy', async (req, res) => {
+  const rawUrl = req.query.url as string;
+  if (!rawUrl) {
+    res.status(400).send('Missing url parameter');
+    return;
+  }
+
+  try {
+    let targetUrl = rawUrl.trim();
+    if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+      targetUrl = `https://${targetUrl}`;
+    }
+
+    const parsed = new URL(targetUrl);
+
+    // Special case for Google search: use iframe-friendly parameter igu=1
+    if (parsed.hostname.includes('google.') && !parsed.searchParams.has('igu')) {
+      parsed.searchParams.set('igu', '1');
+    }
+
+    const response = await fetch(parsed.toString(), {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+      },
+      redirect: 'follow',
+    });
+
+    const contentType = response.headers.get('content-type') || 'text/html';
+    res.setHeader('Content-Type', contentType);
+
+    if (contentType.includes('text/html')) {
+      let html = await response.text();
+      const baseTag = `<base href="${parsed.origin}/">`;
+      if (html.includes('<head>')) {
+        html = html.replace('<head>', `<head>${baseTag}`);
+      } else {
+        html = `${baseTag}${html}`;
+      }
+      res.send(html);
+    } else {
+      const buffer = Buffer.from(await response.arrayBuffer());
+      res.send(buffer);
+    }
+  } catch (err: any) {
+    res.status(500).send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #1e1f22; color: #dbdee1; padding: 2rem; text-align: center; }
+            .card { max-width: 480px; margin: 3rem auto; background: #2b2d31; padding: 2.5rem; border-radius: 1rem; border: 1px solid #35373c; box-shadow: 0 10px 25px rgba(0,0,0,0.3); }
+            h2 { color: #f23f43; margin-top: 0; font-size: 18px; }
+            p { color: #949ba4; font-size: 13px; line-height: 1.5; }
+            .btn { display: inline-block; margin-top: 1rem; background: #5865f2; color: white; padding: 0.6rem 1.2rem; border-radius: 0.5rem; text-decoration: none; font-weight: bold; font-size: 13px; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h2>Não foi possível carregar a página</h2>
+            <p>O site solicitado recusou a conexão direta ou ocorreu um erro de rede.</p>
+            <p style="font-family: monospace; font-size: 11px; color: #72767d;">${err.message || 'Erro de conexão'}</p>
+            <a class="btn" href="${rawUrl}" target="_blank" rel="noopener noreferrer">Abrir em Nova Aba Externa ↗</a>
+          </div>
+        </body>
+      </html>
+    `);
+  }
+});
