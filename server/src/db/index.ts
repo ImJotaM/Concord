@@ -54,10 +54,22 @@ export function initDatabase() {
       user_id TEXT NOT NULL,
       nickname TEXT,
       role TEXT DEFAULT 'member',
+      role_id TEXT,
       joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (server_id, user_id),
       FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS roles (
+      id TEXT PRIMARY KEY,
+      server_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      color TEXT DEFAULT '#99aab5',
+      is_admin INTEGER DEFAULT 0,
+      position INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS messages (
@@ -74,12 +86,17 @@ export function initDatabase() {
 
     CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_channels_server ON channels(server_id, position);
+    CREATE INDEX IF NOT EXISTS idx_roles_server ON roles(server_id, position);
   `);
+
+  try {
+    db.exec(`ALTER TABLE server_members ADD COLUMN role_id TEXT`);
+  } catch {}
 
   // Seed default server and channels if no servers exist
   const serverCount = db.prepare('SELECT COUNT(*) as count FROM servers').get() as { count: number };
   if (serverCount.count === 0) {
-    console.log('🌱 Seeding initial Concord LAN default server and channels...');
+    console.log('🌱 Seeding initial Concord LAN default server, channels, and roles...');
     const defaultServerId = 'server-general';
     const systemUserId = 'user-system';
 
@@ -92,6 +109,14 @@ export function initDatabase() {
       INSERT INTO servers (id, name, icon, owner_id)
       VALUES (?, ?, ?, ?)
     `).run(defaultServerId, 'LAN Community Hub', '🌐', systemUserId);
+
+    const insertRole = db.prepare(`
+      INSERT INTO roles (id, server_id, name, color, is_admin, position)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    insertRole.run('role-admin', defaultServerId, 'Administrador', '#e91e63', 1, 0);
+    insertRole.run('role-mod', defaultServerId, 'Moderador', '#2ecc71', 0, 1);
+    insertRole.run('role-member', defaultServerId, 'Membro', '#5865f2', 0, 2);
 
     const insertChannel = db.prepare(`
       INSERT INTO channels (id, server_id, name, type, topic, position)
@@ -108,5 +133,33 @@ export function initDatabase() {
       INSERT INTO messages (id, channel_id, user_id, content)
       VALUES (?, ?, ?, ?)
     `).run('msg-welcome', 'chan-general', systemUserId, '🎉 **Welcome to Concord!** This is a high-speed LAN-only Discord clone. Anyone on this Wi-Fi/Ethernet network can connect, chat, share files, and talk with crystal-clear voice!');
+  }
+
+  // Ensure default roles exist for all servers
+  try {
+    const allExistingServers = db.prepare('SELECT id FROM servers').all() as { id: string }[];
+    const checkRoles = db.prepare('SELECT COUNT(*) as count FROM roles WHERE server_id = ?');
+    const insertRole = db.prepare('INSERT OR IGNORE INTO roles (id, server_id, name, color, is_admin, position) VALUES (?, ?, ?, ?, ?, ?)');
+    for (const s of allExistingServers) {
+      const res = checkRoles.get(s.id) as { count: number };
+      if (res.count === 0) {
+        insertRole.run(`role-admin-${s.id}`, s.id, 'Administrador', '#e91e63', 1, 0);
+        insertRole.run(`role-mod-${s.id}`, s.id, 'Moderador', '#2ecc71', 0, 1);
+        insertRole.run(`role-member-${s.id}`, s.id, 'Membro', '#5865f2', 0, 2);
+      }
+    }
+  } catch (e) {
+    console.error('Role check migration error:', e);
+  }
+
+  // Clean up ghost/temporary offline users who never sent a message and are not the system bot
+  try {
+    db.prepare(`
+      DELETE FROM users 
+      WHERE id != 'user-system' 
+      AND id NOT IN (SELECT DISTINCT user_id FROM messages)
+    `).run();
+  } catch (e) {
+    console.warn('Ghost user cleanup notice:', e);
   }
 }

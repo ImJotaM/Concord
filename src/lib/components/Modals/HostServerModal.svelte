@@ -239,22 +239,45 @@
             </button>
           </div>
 
-          <!-- LAN Wi-Fi URL -->
+          <!-- LAN Wi-Fi URL for Friends -->
           {#if primaryLanIp !== 'localhost'}
             <div class="flex items-center justify-between bg-[#1e1f22] p-2.5 rounded-md border border-[#1f2023]">
               <div class="flex items-center space-x-2.5 truncate mr-2">
                 <Smartphone class="w-4 h-4 text-[#23a55a] shrink-0" />
                 <div class="truncate">
-                  <div class="text-[11px] text-[#949ba4]">Wi-Fi LAN Server URL (Share with Friends):</div>
-                  <div class="text-xs text-[#23a55a] font-mono font-semibold">
+                  <div class="text-[11px] text-[#949ba4]">Link do App para Amigos no Wi-Fi (Navegador/Celular):</div>
+                  <div class="text-xs text-[#23a55a] font-mono font-bold">
+                    https://{primaryLanIp}:5173
+                  </div>
+                </div>
+              </div>
+              <button
+                onclick={() => copyToClipboard(`https://${primaryLanIp}:5173`, 'lan-app-url')}
+                class="p-1.5 text-[#949ba4] hover:text-white rounded hover:bg-[#313338] transition-colors shrink-0 cursor-pointer"
+                title="Copiar Link do App"
+              >
+                {#if copiedItem === 'lan-app-url'}
+                  <Check class="w-4 h-4 text-[#23a55a]" />
+                {:else}
+                  <Copy class="w-4 h-4" />
+                {/if}
+              </button>
+            </div>
+
+            <div class="flex items-center justify-between bg-[#1e1f22] p-2.5 rounded-md border border-[#1f2023]">
+              <div class="flex items-center space-x-2.5 truncate mr-2">
+                <Server class="w-4 h-4 text-[#5865f2] shrink-0" />
+                <div class="truncate">
+                  <div class="text-[11px] text-[#949ba4]">Endereço do Servidor LAN (WebSocket/API):</div>
+                  <div class="text-xs text-[#dbdee1] font-mono font-semibold">
                     http://{primaryLanIp}:3000
                   </div>
                 </div>
               </div>
               <button
                 onclick={() => copyToClipboard(`http://${primaryLanIp}:3000`, 'lan-url')}
-                class="p-1.5 text-[#949ba4] hover:text-white rounded hover:bg-[#313338] transition-colors shrink-0"
-                title="Copy Wi-Fi Server URL"
+                class="p-1.5 text-[#949ba4] hover:text-white rounded hover:bg-[#313338] transition-colors shrink-0 cursor-pointer"
+                title="Copiar URL do Servidor"
               >
                 {#if copiedItem === 'lan-url'}
                   <Check class="w-4 h-4 text-[#23a55a]" />
@@ -269,7 +292,7 @@
         <div class="bg-[#1e1f22]/60 p-2.5 rounded text-[11px] text-[#949ba4] flex items-start space-x-2">
           <Info class="w-4 h-4 text-[#5865f2] shrink-0 mt-0.5" />
           <span>
-            Any phone, tablet, or PC connected to the same Wi-Fi can connect to this host server without needing an internet connection.
+            Qualquer celular, notebook ou computador conectado no mesmo Wi-Fi (<strong class="text-white">192.168.1.6</strong>) pode acessar o aplicativo e entrar nas chamadas sem precisar de internet!
           </span>
         </div>
       </div>

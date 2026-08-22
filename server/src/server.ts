@@ -22,17 +22,40 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Serve uploaded media (images, files)
+// Serve uploaded media (images, files, videos) with CORS & streaming support
 const uploadsDir = path.resolve(__dirname, '../uploads');
-app.use('/uploads', express.static(uploadsDir));
+app.use(
+  '/uploads',
+  express.static(uploadsDir, {
+    setHeaders: (res) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    },
+  })
+);
+
+import fs from 'fs';
 
 // API routes
 app.use('/api', apiRouter);
 
-// Health check
-app.get('/', (_req, res) => {
-  res.send('Concord LAN Server is running.');
-});
+// Serve built frontend if available
+const distDir = path.resolve(__dirname, '../../dist');
+if (fs.existsSync(distDir)) {
+  app.use(express.static(distDir));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) {
+      return next();
+    }
+    res.sendFile(path.join(distDir, 'index.html'));
+  });
+} else {
+  // Health check fallback
+  app.get('/', (_req, res) => {
+    res.send('Concord LAN Server is running.');
+  });
+}
 
 // Create HTTP and WebSocket server
 const server = http.createServer(app);

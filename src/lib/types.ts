@@ -15,13 +15,42 @@ export interface Server {
   created_at?: string;
 }
 
+export interface Role {
+  id: string;
+  server_id: string;
+  name: string;
+  color: string;
+  is_admin: boolean | number;
+  position?: number;
+}
+
+export interface ServerMember {
+  server_id: string;
+  user_id: string;
+  nickname?: string;
+  role?: string;
+  role_id?: string;
+  role_name?: string;
+  role_color?: string;
+  is_admin?: boolean | number;
+  joined_at?: string;
+}
+
 export interface Channel {
   id: string;
   server_id: string;
   name: string;
-  type: 'text' | 'voice';
+  type: 'text' | 'voice' | 'web';
   topic?: string;
   position?: number;
+}
+
+export interface BrowserTab {
+  id: string;
+  title: string;
+  url: string;
+  favicon?: string;
+  isLoading?: boolean;
 }
 
 export interface MessageAttachment {
@@ -59,5 +88,33 @@ export interface VoicePeer {
   displayName: string;
   avatar: string;
   isSpeaking?: boolean;
+  isScreenSharing?: boolean;
   audioStream?: MediaStream;
+}
+
+export interface VoiceParticipant {
+  peerId?: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  avatar: string;
+  isSpeaking?: boolean;
+  isScreenSharing?: boolean;
+}
+
+export interface RemoteScreen {
+  peerId: string;
+  userId: string;
+  displayName: string;
+  avatar: string;
+  stream: MediaStream;
+}
+
+export interface AudioSettings {
+  inputDeviceId: string;
+  outputDeviceId: string;
+  echoCancellation: boolean;
+  noiseSuppression: boolean;
+  autoGainControl: boolean;
+  sensitivity: number;
 }

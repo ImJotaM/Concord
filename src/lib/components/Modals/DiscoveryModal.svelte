@@ -110,26 +110,39 @@
 
       <!-- Manual Connection Input -->
       <div>
-        <label class="block text-xs font-bold uppercase tracking-wider text-[#949ba4] mb-2">
-          Or Enter Server IP / Host URL
+        <label for="server-ip-input" class="block text-xs font-bold uppercase tracking-wider text-[#949ba4] mb-2">
+          Conectar via IP / URL do Servidor
         </label>
         <div class="flex space-x-2">
           <input
+            id="server-ip-input"
             type="text"
             bind:value={customUrl}
-            placeholder="http://192.168.1.50:3000"
+            placeholder="http://192.168.1.6:3000"
             class="bg-[#1e1f22] text-white text-sm px-3 py-2 rounded flex-1 focus:outline-none focus:ring-1 focus:ring-[#5865f2] font-mono border border-[#1f2023]"
           />
           <button
             onclick={() => handleConnect(customUrl)}
-            class="bg-[#23a55a] hover:bg-[#1f934f] text-white text-sm px-4 py-2 rounded font-semibold transition-colors shrink-0"
+            class="bg-[#23a55a] hover:bg-[#1f934f] text-white text-sm px-4 py-2 rounded font-semibold transition-colors shrink-0 cursor-pointer"
           >
-            Connect
+            Conectar
           </button>
         </div>
-        <p class="text-[11px] text-[#949ba4] mt-1.5">
-          Tip: On your host PC running Concord server, share your LAN IP address (e.g. <span class="text-white font-mono">http://192.168.1.X:3000</span>) with phones and laptops on the same Wi-Fi.
-        </p>
+        <div class="flex items-center space-x-2 mt-2">
+          <span class="text-[11px] text-[#949ba4]">Sugestões rápidas:</span>
+          <button
+            onclick={() => handleConnect('http://192.168.1.6:3000')}
+            class="text-[11px] bg-[#1e1f22] hover:bg-[#35373c] text-[#23a55a] px-2 py-0.5 rounded font-mono border border-[#1f2023] cursor-pointer"
+          >
+            192.168.1.6:3000 (Wi-Fi)
+          </button>
+          <button
+            onclick={() => handleConnect('http://localhost:3000')}
+            class="text-[11px] bg-[#1e1f22] hover:bg-[#35373c] text-[#5865f2] px-2 py-0.5 rounded font-mono border border-[#1f2023] cursor-pointer"
+          >
+            localhost:3000
+          </button>
+        </div>
       </div>
     </div>
   </div>

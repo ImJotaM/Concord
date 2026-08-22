@@ -13,6 +13,21 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     host: true, // Allow LAN devices (e.g. mobile phones) to connect directly in dev mode
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+        ws: true,
+      },
+      '/uploads': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+      },
+      '/ws': {
+        target: 'ws://localhost:3000',
+        ws: true,
+      },
+    },
   },
   envPrefix: ['VITE_', 'TAURI_ENV_*'],
 });

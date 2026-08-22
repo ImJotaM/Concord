@@ -20,6 +20,9 @@ class ClientService {
       (isSpeaking) => {
         appState.voiceState.isSpeaking = isSpeaking;
         this.send('voice_speaking', { isSpeaking });
+      },
+      (audioChunk) => {
+        this.send('voice_audio_chunk', { chunk: audioChunk });
       }
     );
   }
@@ -98,9 +101,14 @@ class ClientService {
   private handleServerMessage(type: string, payload: any) {
     switch (type) {
       case 'init_sync': {
+        if (payload.myPeerId && this.voiceEngine) {
+          this.voiceEngine.setMyPeerId(payload.myPeerId);
+        }
         appState.servers = payload.servers || [];
         appState.channels = payload.channels || [];
         appState.users = payload.users || [];
+        appState.roles = payload.roles || [];
+        appState.serverMembers = payload.serverMembers || [];
         appState.voiceState.roomParticipants = payload.voiceRooms || {};
 
         if (appState.servers.length > 0 && !appState.servers.some((s) => s.id === appState.currentServerId)) {
@@ -132,6 +140,12 @@ class ClientService {
           if (payload.customStatus !== undefined) {
             user.customStatus = payload.customStatus;
           }
+          if (payload.user) {
+            user.displayName = payload.user.displayName || user.displayName;
+            user.avatar = payload.user.avatar || user.avatar;
+          }
+        } else if (payload.user) {
+          appState.users.push(payload.user);
         }
         break;
       }
@@ -158,6 +172,25 @@ class ClientService {
               }
             });
           }
+          if (payload.roles) {
+            payload.roles.forEach((r: any) => {
+              if (!appState.roles.some((ro) => ro.id === r.id)) {
+                appState.roles.push(r);
+              }
+            });
+          }
+          if (payload.serverMembers) {
+            payload.serverMembers.forEach((sm: any) => {
+              const idx = appState.serverMembers.findIndex(
+                (existing) => existing.server_id === sm.server_id && existing.user_id === sm.user_id
+              );
+              if (idx !== -1) {
+                appState.serverMembers[idx] = sm;
+              } else {
+                appState.serverMembers.push(sm);
+              }
+            });
+          }
         }
         break;
       }
@@ -165,6 +198,9 @@ class ClientService {
       // WebRTC Voice Events
       case 'voice_joined': {
         appState.voiceState.activeChannelId = payload.channelId;
+        if (payload.myPeerId && this.voiceEngine) {
+          this.voiceEngine.setMyPeerId(payload.myPeerId);
+        }
         // Connect with each existing peer
         if (payload.existingPeers && this.voiceEngine) {
           for (const peer of payload.existingPeers) {
@@ -206,7 +242,7 @@ class ClientService {
         // Update speaking status in participant list
         for (const chanId in appState.voiceState.roomParticipants) {
           const list = appState.voiceState.roomParticipants[chanId];
-          const participant = list.find((p) => p.userId === payload.userId);
+          const participant = list.find((p) => p.userId === payload.userId || p.peerId === payload.peerId);
           if (participant) {
             participant.isSpeaking = payload.isSpeaking;
           }
@@ -214,8 +250,139 @@ class ClientService {
         break;
       }
 
+      case 'voice_peer_screen_share': {
+        if (!payload.isSharing) {
+          delete appState.voiceState.remoteScreenStreams[payload.peerId];
+        }
+        for (const chanId in appState.voiceState.roomParticipants) {
+          const list = appState.voiceState.roomParticipants[chanId];
+          const participant = list.find((p) => p.userId === payload.userId || p.peerId === payload.peerId);
+          if (participant) {
+            participant.isScreenSharing = payload.isSharing;
+          }
+        }
+        break;
+      }
+
+      case 'voice_peer_audio_chunk': {
+        if (this.voiceEngine) {
+          const userVol = this.getUserVolume(payload.userId);
+          this.voiceEngine.playRemoteAudioChunk(payload.userId, payload.chunk, userVol);
+        }
+        break;
+      }
+
       case 'voice_room_update': {
         appState.voiceState.roomParticipants[payload.channelId] = payload.members || [];
+        break;
+      }
+
+      // Moderation & Roles Events
+      case 'message_deleted': {
+        if (appState.messages[payload.channelId]) {
+          appState.messages[payload.channelId] = appState.messages[payload.channelId].filter((m) => m.id !== payload.messageId);
+        }
+        break;
+      }
+
+      case 'channel_deleted': {
+        appState.channels = appState.channels.filter((c) => c.id !== payload.channelId);
+        delete appState.messages[payload.channelId];
+        if (appState.currentChannelId === payload.channelId) {
+          const remaining = appState.currentChannels.filter((c) => c.type === 'text');
+          if (remaining.length > 0) {
+            appState.currentChannelId = remaining[0].id;
+            this.fetchChannelMessages(remaining[0].id);
+          }
+        }
+        break;
+      }
+
+      case 'server_deleted': {
+        appState.servers = appState.servers.filter((s) => s.id !== payload.serverId);
+        appState.channels = appState.channels.filter((c) => c.server_id !== payload.serverId);
+        appState.roles = appState.roles.filter((r) => r.server_id !== payload.serverId);
+        appState.serverMembers = appState.serverMembers.filter((sm) => sm.server_id !== payload.serverId);
+        if (appState.currentServerId === payload.serverId) {
+          if (appState.servers.length > 0) {
+            appState.currentServerId = appState.servers[0].id;
+            const chans = appState.channels.filter((c) => c.server_id === appState.currentServerId && c.type === 'text');
+            if (chans.length > 0) {
+              appState.currentChannelId = chans[0].id;
+              this.fetchChannelMessages(chans[0].id);
+            }
+          }
+        }
+        break;
+      }
+
+      case 'member_kicked': {
+        appState.serverMembers = appState.serverMembers.filter(
+          (sm) => !(sm.server_id === payload.serverId && sm.user_id === payload.userId)
+        );
+        if (payload.userId === appState.currentUser.id && appState.currentServerId === payload.serverId) {
+          const otherServers = appState.servers.filter((s) => s.id !== payload.serverId);
+          if (otherServers.length > 0) {
+            appState.currentServerId = otherServers[0].id;
+          }
+        }
+        break;
+      }
+
+      case 'user_deleted': {
+        appState.users = appState.users.filter((u) => u.id !== payload.userId);
+        appState.serverMembers = appState.serverMembers.filter((sm) => sm.user_id !== payload.userId);
+        for (const chanId in appState.messages) {
+          appState.messages[chanId] = appState.messages[chanId].filter((m) => m.userId !== payload.userId);
+        }
+        break;
+      }
+
+      case 'user_kicked': {
+        alert(payload.message || 'Você foi desconectado pelo administrador.');
+        window.location.reload();
+        break;
+      }
+
+      case 'role_created': {
+        if (!appState.roles.some((r) => r.id === payload.role.id)) {
+          appState.roles.push(payload.role);
+        }
+        break;
+      }
+
+      case 'role_updated': {
+        const idx = appState.roles.findIndex((r) => r.id === payload.role.id);
+        if (idx !== -1) {
+          appState.roles[idx] = payload.role;
+        }
+        break;
+      }
+
+      case 'role_deleted': {
+        appState.roles = appState.roles.filter((r) => r.id !== payload.roleId);
+        appState.serverMembers.forEach((sm) => {
+          if (sm.role_id === payload.roleId) {
+            sm.role_id = undefined;
+          }
+        });
+        break;
+      }
+
+      case 'member_role_updated': {
+        const idx = appState.serverMembers.findIndex(
+          (sm) => sm.server_id === payload.serverId && sm.user_id === payload.userId
+        );
+        if (idx !== -1) {
+          appState.serverMembers[idx] = { ...appState.serverMembers[idx], ...payload.member, role: payload.role, role_id: payload.roleId };
+        } else {
+          appState.serverMembers.push(payload.member || {
+            server_id: payload.serverId,
+            user_id: payload.userId,
+            role: payload.role,
+            role_id: payload.roleId,
+          });
+        }
         break;
       }
     }
@@ -253,10 +420,10 @@ class ClientService {
     this.send('create_server', { name, icon });
   }
 
-  async joinVoiceChannel(channelId: string) {
+  async joinVoiceChannel(channelId: string, listenOnly = false, deviceId?: string) {
     try {
-      if (this.voiceEngine) {
-        await this.voiceEngine.startLocalAudio();
+      if (this.voiceEngine && !listenOnly) {
+        await this.voiceEngine.startLocalAudio(deviceId);
         this.voiceEngine.setMute(appState.voiceState.isMuted);
         this.voiceEngine.setDeafen(appState.voiceState.isDeafened);
       }
@@ -293,6 +460,81 @@ class ClientService {
     }
   }
 
+  async startScreenShare() {
+    if (this.voiceEngine) {
+      try {
+        await this.voiceEngine.startScreenShare();
+        appState.voiceState.isScreenSharing = true;
+        this.send('voice_screen_share', { isSharing: true });
+      } catch (e) {
+        console.error('Failed to start screen share:', e);
+      }
+    }
+  }
+
+  async stopScreenShare() {
+    if (this.voiceEngine) {
+      await this.voiceEngine.stopScreenShare();
+      appState.voiceState.isScreenSharing = false;
+      this.send('voice_screen_share', { isSharing: false });
+    }
+  }
+
+  toggleScreenShare() {
+    if (appState.voiceState.isScreenSharing) {
+      this.stopScreenShare();
+    } else {
+      this.startScreenShare();
+    }
+  }
+
+  setUserVolume(userId: string, volume: number) {
+    appState.voiceState.userVolumes[userId] = volume;
+    if (this.voiceEngine) {
+      this.voiceEngine.setRemoteUserVolume(userId, volume);
+    }
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(`concord_vol_${userId}`, volume.toString());
+      } catch {}
+    }
+  }
+
+  getUserVolume(userId: string): number {
+    if (appState.voiceState.userVolumes[userId] !== undefined) {
+      return appState.voiceState.userVolumes[userId];
+    }
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem(`concord_vol_${userId}`);
+      if (saved) {
+        const val = parseInt(saved, 10);
+        if (!isNaN(val)) {
+          return val;
+        }
+      }
+    }
+    return 100; // Default 100%
+  }
+
+  async switchMicrophone(deviceId: string) {
+    if (this.voiceEngine) {
+      this.voiceEngine.cleanup();
+      await this.joinVoiceChannel(appState.voiceState.activeChannelId!, false, deviceId);
+    }
+  }
+
+  async setAudioOutput(deviceId: string) {
+    // Handled directly via HTMLAudioElement.setSinkId on user audio elements
+    appState.audioSettings.outputDeviceId = deviceId;
+  }
+
+  updateAudioSettings(settings: Partial<typeof appState.audioSettings>) {
+    appState.audioSettings = { ...appState.audioSettings, ...settings };
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('concord_audio_settings', JSON.stringify(appState.audioSettings));
+    }
+  }
+
   async uploadFile(file: File): Promise<string | null> {
     try {
       const formData = new FormData();
@@ -305,7 +547,7 @@ class ClientService {
 
       if (res.ok) {
         const data = await res.json();
-        return `${appState.serverUrl}${data.url}`;
+        return data.url;
       }
       return null;
     } catch (err) {
@@ -350,6 +592,42 @@ class ClientService {
     }
 
     appState.discoveredServers = found;
+  }
+
+  deleteMessage(messageId: string, channelId: string) {
+    this.send('delete_message', { messageId, channelId });
+  }
+
+  deleteChannel(channelId: string, serverId: string) {
+    this.send('delete_channel', { channelId, serverId });
+  }
+
+  deleteServer(serverId: string) {
+    this.send('delete_server', { serverId });
+  }
+
+  kickMember(serverId: string, userId: string) {
+    this.send('kick_member', { serverId, userId });
+  }
+
+  deleteUser(userId: string) {
+    this.send('delete_user', { userId });
+  }
+
+  createRole(serverId: string, name: string, color = '#99aab5', isAdmin = false) {
+    this.send('create_role', { serverId, name, color, isAdmin });
+  }
+
+  updateRole(roleId: string, serverId: string, name: string, color: string, isAdmin: boolean) {
+    this.send('update_role', { roleId, serverId, name, color, isAdmin });
+  }
+
+  deleteRole(roleId: string, serverId: string) {
+    this.send('delete_role', { roleId, serverId });
+  }
+
+  assignMemberRole(serverId: string, userId: string, roleId?: string, roleName?: string) {
+    this.send('assign_member_role', { serverId, userId, roleId, roleName });
   }
 
   public send(type: string, payload: any) {
