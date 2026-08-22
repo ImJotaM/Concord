@@ -5,11 +5,6 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Versão do Release (ex: v1.0.0)'
-        required: false
-        default: 'v1.0.0'
 
 jobs:
   release:
@@ -41,33 +36,23 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
-      - name: Install root dependencies
-        run: npm ci
-
-      - name: Install server dependencies & build server
+      - name: Install dependencies
         run: |
-          cd server
           npm ci
-          npm run build
-          cd ..
+          npm --prefix server ci
 
-      - name: Build frontend
-        run: npm run build
+      - name: Build server and frontend
+        run: |
+          npm --prefix server run build
+          npm run build
 
       - name: Build Tauri Desktop App & Create GitHub Release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name || inputs.version || 'v1.0.0' }}
-          releaseName: 'Concord LAN App ${{ github.ref_name || inputs.version || 'v1.0.0' }}'
-          releaseBody: |
-            ## 🎉 Concord LAN Release ${{ github.ref_name || inputs.version || 'v1.0.0' }}
-            
-            Aplicativo de bate-papo em rede local (LAN) com voz em alta velocidade WebRTC, compartilhamento de tela com áudio, mensagens diretas (DMs), navegador web integrado e painel de efeitos sonoros (Soundboard).
-            
-            ### 📦 Download para Windows (.exe / .msi)
-            - Baixe o instalador `.exe` (Setup NSIS) ou `.msi` anexado nos Assets abaixo.
+          tagName: v__VERSION__
+          releaseName: 'Concord LAN App v__VERSION__'
+          releaseBody: 'Concord LAN v__VERSION__ - Aplicativo de bate-papo em rede local com voz WebRTC, compartilhamento de tela, mensagens diretas (DMs) e soundboard. Baixe o instalador .exe abaixo.'
           releaseDraft: false
           prerelease: false
-          args: ${{ matrix.args }}
