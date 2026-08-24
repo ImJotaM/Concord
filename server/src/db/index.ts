@@ -1,11 +1,5 @@
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
-import { createRequire } from 'module';
-
-const require = createRequire(import.meta.url);
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // Store database file in server/data/concord.db (or persistent AppData dir)
 const dataDir = process.env.CONCORD_DATA_DIR

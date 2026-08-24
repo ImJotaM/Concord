@@ -54,13 +54,13 @@ class ClientService {
       const wsProtocol = (httpUrl.protocol === 'https:' || httpUrl.protocol === 'wss:') ? 'wss:' : 'ws:';
       const wsUrl = `${wsProtocol}//${httpUrl.host}`;
 
-      console.log('🔌 Connecting to WebSocket at:', wsUrl);
+      console.log('Connecting to WebSocket at:', wsUrl);
       this.ws = new WebSocket(wsUrl);
 
       this.ws.onopen = () => {
         this.fallbackAttempts = 0;
         appState.connectionStatus = 'connected';
-        console.log('⚡ Connected to Concord LAN server at', wsUrl);
+        console.log('Connected to Concord LAN server at', wsUrl);
 
         // Authenticate immediately
         this.send('auth', {

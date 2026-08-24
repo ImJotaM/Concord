@@ -77,7 +77,7 @@ export class ServerHostService {
 
   async startLocalServer(): Promise<boolean> {
     appState.isServerStarting = true;
-    appState.serverLogs.push(`[${new Date().toLocaleTimeString()}] 🚀 Starting Concord LAN Server...`);
+    appState.serverLogs.push(`[${new Date().toLocaleTimeString()}] Starting Concord LAN Server...`);
 
     if (this.isTauri()) {
       try {
@@ -87,7 +87,7 @@ export class ServerHostService {
           appState.lanIps = res.lan_ips;
         }
       } catch (err: any) {
-        appState.serverLogs.push(`[${new Date().toLocaleTimeString()}] ❌ Failed to start server: ${err?.message || err}`);
+        appState.serverLogs.push(`[${new Date().toLocaleTimeString()}] Failed to start server: ${err?.message || err}`);
         appState.isServerStarting = false;
         return false;
       }
@@ -114,7 +114,7 @@ export class ServerHostService {
             if (data.localIps) {
               appState.lanIps = data.localIps;
             }
-            appState.serverLogs.push(`[${new Date().toLocaleTimeString()}] ✅ Concord LAN Server is live and running on port 3000!`);
+            appState.serverLogs.push(`[${new Date().toLocaleTimeString()}] Concord LAN Server is live and running`);
             // Connect client to local server
             clientService.connect('http://localhost:3000');
             resolve(true);
@@ -126,7 +126,7 @@ export class ServerHostService {
           clearInterval(this.pollInterval);
           appState.isServerStarting = false;
           if (!this.isTauri()) {
-            appState.serverLogs.push(`[${new Date().toLocaleTimeString()}] ⏳ Polling timeout. Run 'npm run server' in your terminal and click 'Test Connection'.`);
+            appState.serverLogs.push(`[${new Date().toLocaleTimeString()}] Polling timeout. Run 'npm run server' in your terminal and click 'Test Connection'.`);
           }
           resolve(false);
         }
@@ -140,7 +140,7 @@ export class ServerHostService {
         const { invoke } = await import('@tauri-apps/api/core');
         await invoke('stop_local_server');
         appState.localServerRunning = false;
-        appState.serverLogs.push(`[${new Date().toLocaleTimeString()}] 🛑 Local server stopped.`);
+        appState.serverLogs.push(`[${new Date().toLocaleTimeString()}] Local server stopped.`);
         return true;
       } catch (err) {
         console.error('Failed to stop server:', err);

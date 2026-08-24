@@ -43,10 +43,6 @@ export function startMdnsBroadcaster(port: number, serverName: string = 'Concord
       },
     });
 
-    service.on('up', () => {
-      console.log(`📡 mDNS Broadcast active: "${serverName}" published on local network.`);
-    });
-
     service.on('error', (err) => {
       console.warn('mDNS warning (LAN clients can still connect via IP):', err.message);
     });

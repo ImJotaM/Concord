@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build:all && node scripts/prepare-tauri-resources.cjs"
+    "beforeDevCommand": "npm run prep:server && npm run dev",
+    "beforeBuildCommand": "npm run build && npm run prep:server"
   },
   "app": {
     "windows": [

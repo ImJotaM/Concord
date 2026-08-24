@@ -3,15 +3,11 @@ import cors from 'cors';
 import http from 'http';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
 import { WebSocketServer } from 'ws';
 import { initDatabase } from './db/index.js';
 import { WebSocketHandler } from './ws/handler.js';
 import { apiRouter } from './routes/api.js';
 import { startMdnsBroadcaster, getLocalIpAddresses } from './discovery/mdns.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = '0.0.0.0'; // Listen on all network interfaces for LAN connectivity
@@ -70,17 +66,14 @@ new WebSocketHandler(wss);
 
 server.listen(PORT, HOST, () => {
   const localIps = getLocalIpAddresses();
-  console.log(`\n======================================================`);
-  console.log(`🚀 Concord LAN Server running on port ${PORT}`);
-  console.log(`   Local machine: http://localhost:${PORT}`);
+  console.log(`Concord LAN Server running on port ${PORT}`);
+  console.log(`LAN access:`);
+  console.log(`    http://localhost:${PORT}`);
   if (localIps.length > 0) {
-    console.log(`   LAN Access:`);
     localIps.forEach((ip) => {
-      console.log(`     👉 http://${ip}:${PORT}`);
+      console.log(`    http://${ip}:${PORT}`);
     });
   }
-  console.log(`======================================================\n`);
 
-  // Start mDNS network broadcasting
   startMdnsBroadcaster(PORT, 'Concord LAN Server');
 });
