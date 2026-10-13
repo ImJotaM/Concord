@@ -266,7 +266,16 @@ class AppState {
 
   discoveredServers = $state<DiscoveredServer[]>([]);
   activeModal = $state<'discovery' | 'createChannel' | 'createServer' | 'settings' | 'hostServer' | 'micPermission' | 'serverRoles' | 'soundboard' | null>(null);
+  previewImage = $state<{ url: string; filename?: string } | null>(null);
   pendingVoiceChannelId = $state<string | null>(null);
+
+  openImagePreview(url: string, filename?: string) {
+    this.previewImage = { url, filename };
+  }
+
+  closeImagePreview() {
+    this.previewImage = null;
+  }
 
   // Main view state: 'chat' | 'browser' | 'dms'
   currentView = $state<'chat' | 'browser' | 'dms'>('chat');

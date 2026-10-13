@@ -20,9 +20,23 @@
     Play,
     Compass,
     WifiOff,
+    X,
+    Loader2,
+    Upload,
   } from '@lucide/svelte';
   import { tick, untrack } from 'svelte';
   import { getAvatarUrl, ICONS8_ICONS } from '../utils/icons8';
+  import {
+    getFullAttachmentUrl,
+    getFilename,
+    isImageUrl,
+    isVideoUrl,
+    isAudioUrl,
+    formatFileSize,
+    extractFilesFromClipboard,
+    generatePastedFileName,
+    type PendingAttachment,
+  } from '../utils/attachment';
   import Avatar from './Avatar.svelte';
 
   interface Props {
@@ -35,7 +49,8 @@
   let messageInput = $state('');
   let messagesContainer = $state<HTMLDivElement | null>(null);
   let fileInput = $state<HTMLInputElement | null>(null);
-  let isUploading = $state(false);
+  let pendingAttachments = $state<PendingAttachment[]>([]);
+  let isDraggingOver = $state(false);
   let showEmojiPicker = $state(false);
   let copiedMessageId = $state<string | null>(null);
   let typingTimer: any = null;
@@ -188,12 +203,131 @@
     }, 2000);
   }
 
-  function handleSendMessage() {
-    const text = messageInput.trim();
-    if (!text || !appState.currentChannelId) return;
+  function processFiles(files: File[]) {
+    if (!files || files.length === 0) return;
 
-    clientService.sendMessage(appState.currentChannelId, text);
+    for (const file of files) {
+      const isImg = file.type.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico|avif)$/i.test(file.name);
+      const filename = isImg ? generatePastedFileName(file.name, file.type) : file.name;
+      const fileObj = new File([file], filename, { type: file.type || 'application/octet-stream' });
+      const previewUrl = isImg ? URL.createObjectURL(fileObj) : '';
+      const attachmentId = Math.random().toString(36).substring(2, 9);
+
+      const pendingItem: PendingAttachment = {
+        id: attachmentId,
+        file: fileObj,
+        previewUrl,
+        name: filename,
+        size: fileObj.size,
+        isImage: isImg,
+        isUploading: true,
+        uploadFailed: false,
+      };
+
+      pendingAttachments = [...pendingAttachments, pendingItem];
+
+      // Initiate background upload immediately
+      clientService
+        .uploadFile(fileObj)
+        .then((url) => {
+          pendingAttachments = pendingAttachments.map((att) =>
+            att.id === attachmentId
+              ? { ...att, uploadedUrl: url, isUploading: false, uploadFailed: !url }
+              : att
+          );
+        })
+        .catch((err) => {
+          console.error('Upload failed for attachment:', err);
+          pendingAttachments = pendingAttachments.map((att) =>
+            att.id === attachmentId
+              ? { ...att, isUploading: false, uploadFailed: true }
+              : att
+          );
+        });
+    }
+  }
+
+  function handlePaste(e: ClipboardEvent) {
+    const files = extractFilesFromClipboard(e);
+    if (files.length > 0) {
+      e.preventDefault();
+      processFiles(files);
+    }
+  }
+
+  function removeAttachment(id: string) {
+    const target = pendingAttachments.find((a) => a.id === id);
+    if (target && target.previewUrl && target.previewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(target.previewUrl);
+    }
+    pendingAttachments = pendingAttachments.filter((a) => a.id !== id);
+  }
+
+  function handleDragOver(e: DragEvent) {
+    e.preventDefault();
+    if (e.dataTransfer?.types.includes('Files')) {
+      isDraggingOver = true;
+    }
+  }
+
+  function handleDragLeave(e: DragEvent) {
+    e.preventDefault();
+    isDraggingOver = false;
+  }
+
+  function handleDrop(e: DragEvent) {
+    e.preventDefault();
+    isDraggingOver = false;
+    if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+      processFiles(Array.from(e.dataTransfer.files));
+    }
+  }
+
+  function handleFileUpload(e: Event) {
+    const target = e.target as HTMLInputElement;
+    if (!target.files || target.files.length === 0) return;
+    processFiles(Array.from(target.files));
+    target.value = '';
+  }
+
+  async function handleSendMessage() {
+    const text = messageInput.trim();
+    if (!text && pendingAttachments.length === 0) return;
+    if (!appState.currentChannelId) return;
+
+    // Check if any attachment is actively uploading
+    if (pendingAttachments.some((a) => a.isUploading)) {
+      return;
+    }
+
+    // Collect uploaded URLs
+    const uploadedUrls: string[] = [];
+    for (const att of pendingAttachments) {
+      if (att.uploadedUrl) {
+        uploadedUrls.push(att.uploadedUrl);
+      } else if (!att.uploadFailed) {
+        const url = await clientService.uploadFile(att.file);
+        if (url) uploadedUrls.push(url);
+      }
+    }
+
+    if (!text && uploadedUrls.length === 0) return;
+
+    clientService.sendMessage(
+      appState.currentChannelId,
+      text,
+      uploadedUrls.length > 0 ? uploadedUrls : undefined
+    );
+
+    // Revoke blob URLs to free memory
+    pendingAttachments.forEach((att) => {
+      if (att.previewUrl && att.previewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(att.previewUrl);
+      }
+    });
+
     messageInput = '';
+    pendingAttachments = [];
 
     if (typingTimer) {
       clearTimeout(typingTimer);
@@ -209,26 +343,6 @@
     }
   }
 
-  async function handleFileUpload(e: Event) {
-    const target = e.target as HTMLInputElement;
-    if (!target.files || target.files.length === 0) return;
-
-    const file = target.files[0];
-    isUploading = true;
-
-    try {
-      const fileUrl = await clientService.uploadFile(file);
-      if (fileUrl) {
-        clientService.sendMessage(appState.currentChannelId, file.type.startsWith('image/') ? 'Shared an image' : (file.type.startsWith('video/') ? 'Shared a video' : `Uploaded ${file.name}`), [
-          fileUrl,
-        ]);
-      }
-    } finally {
-      isUploading = false;
-      target.value = '';
-    }
-  }
-
   function formatTime(isoString: string) {
     try {
       const d = new Date(isoString);
@@ -236,41 +350,6 @@
     } catch {
       return '';
     }
-  }
-
-  function getFullAttachmentUrl(urlOrPath: string): string {
-    if (!urlOrPath) return '';
-    const uploadsIndex = urlOrPath.indexOf('/uploads/');
-    if (uploadsIndex !== -1) {
-      const relativePath = urlOrPath.substring(uploadsIndex);
-      return `${appState.serverUrl}${relativePath}`;
-    }
-    if (urlOrPath.startsWith('http://') || urlOrPath.startsWith('https://')) {
-      return urlOrPath;
-    }
-    return `${appState.serverUrl}${urlOrPath.startsWith('/') ? '' : '/'}${urlOrPath}`;
-  }
-
-  function getFilename(urlOrPath: string): string {
-    try {
-      const clean = urlOrPath.split('?')[0];
-      const parts = clean.split('/');
-      const last = parts[parts.length - 1];
-      return decodeURIComponent(last) || 'arquivo';
-    } catch {
-      return 'arquivo';
-    }
-  }
-  function isImageUrl(url: string): boolean {
-    return /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico)$/i.test(url);
-  }
-
-  function isVideoUrl(url: string): boolean {
-    return /\.(mp4|webm|mov|mkv|avi|ogv)$/i.test(url);
-  }
-
-  function isAudioUrl(url: string): boolean {
-    return /\.(mp3|wav|ogg|flac|m4a|aac|opus)$/i.test(url);
   }
 
   async function downloadAttachment(url: string, suggestedFilename?: string) {
@@ -295,7 +374,23 @@
   }
 </script>
 
-<div class="flex-1 bg-[#111214] flex flex-col h-full overflow-hidden">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="flex-1 bg-[#111214] flex flex-col h-full overflow-hidden relative"
+  ondragover={handleDragOver}
+  ondragleave={handleDragLeave}
+  ondrop={handleDrop}
+>
+  <!-- Drag and drop overlay -->
+  {#if isDraggingOver}
+    <div class="absolute inset-0 bg-[#5865f2]/20 backdrop-blur-xs border-2 border-dashed border-[#5865f2] z-50 flex flex-col items-center justify-center pointer-events-none rounded-xl m-2">
+      <div class="p-6 bg-[#111214]/95 rounded-2xl border border-[#5865f2] flex flex-col items-center space-y-3 shadow-2xl animate-bounce">
+        <Upload class="w-10 h-10 text-[#5865f2]" />
+        <span class="text-sm font-bold text-white">Solte os arquivos ou imagens para enviar</span>
+      </div>
+    </div>
+  {/if}
+
   <!-- Channel Header -->
   <header class="h-12 border-b border-[#1a1b1e] px-4 flex items-center justify-between bg-[#111214] shrink-0">
     <div class="flex items-center space-x-2 min-w-0 mr-4">
@@ -519,9 +614,11 @@
                   {formatTime(message.createdAt)}
                 </span>
               </div>
-              <div class="text-[#dbdee1] text-[15px] leading-[1.375rem] break-words whitespace-pre-wrap select-text font-normal">
-                {@html renderFormattedMessage(message.content)}
-              </div>
+              {#if message.content && message.content.trim()}
+                <div class="text-[#dbdee1] text-[15px] leading-[1.375rem] break-words whitespace-pre-wrap select-text font-normal">
+                  {@html renderFormattedMessage(message.content)}
+                </div>
+              {/if}
 
               <!-- Attachments -->
               {#if message.attachments && message.attachments.length > 0}
@@ -534,13 +631,14 @@
                     {#if isImageUrl(rawUrl)}
                       <button
                         type="button"
-                        class="block p-0 border-0 bg-transparent cursor-pointer text-left"
-                        onclick={() => window.open(fullUrl, '_blank')}
+                        class="block p-0 border-0 bg-transparent cursor-pointer text-left group/img"
+                        onclick={() => appState.openImagePreview(fullUrl, filename)}
+                        title="Clique para ver imagem ampliada"
                       >
                         <img
                           src={fullUrl}
                           alt={filename}
-                          class="max-w-md max-h-80 rounded-xl shadow-md border border-[#232428] hover:opacity-95 transition-opacity object-contain bg-[#0e0f10]"
+                          class="max-w-md max-h-80 rounded-xl shadow-md border border-[#232428] hover:border-[#5865f2]/50 hover:opacity-95 transition-all object-contain bg-[#0e0f10]"
                           loading="lazy"
                         />
                       </button>
@@ -607,9 +705,11 @@
               {formatTime(message.createdAt)}
             </div>
             <div class="flex-1 overflow-hidden min-w-0">
-              <div class="text-[#dbdee1] text-[15px] leading-[1.375rem] break-words whitespace-pre-wrap select-text font-normal">
-                {@html renderFormattedMessage(message.content)}
-              </div>
+              {#if message.content && message.content.trim()}
+                <div class="text-[#dbdee1] text-[15px] leading-[1.375rem] break-words whitespace-pre-wrap select-text font-normal">
+                  {@html renderFormattedMessage(message.content)}
+                </div>
+              {/if}
 
               <!-- Attachments in continuation -->
               {#if message.attachments && message.attachments.length > 0}
@@ -622,13 +722,14 @@
                     {#if isImageUrl(rawUrl)}
                       <button
                         type="button"
-                        class="block p-0 border-0 bg-transparent cursor-pointer text-left"
-                        onclick={() => window.open(fullUrl, '_blank')}
+                        class="block p-0 border-0 bg-transparent cursor-pointer text-left group/img"
+                        onclick={() => appState.openImagePreview(fullUrl, filename)}
+                        title="Clique para ver imagem ampliada"
                       >
                         <img
                           src={fullUrl}
                           alt={filename}
-                          class="max-w-md max-h-80 rounded-xl shadow-md border border-[#232428] hover:opacity-95 transition-opacity object-contain bg-[#0e0f10]"
+                          class="max-w-md max-h-80 rounded-xl shadow-md border border-[#232428] hover:border-[#5865f2]/50 hover:opacity-95 transition-all object-contain bg-[#0e0f10]"
                           loading="lazy"
                         />
                       </button>
@@ -713,6 +814,76 @@
 
   <!-- Message Input Bar -->
   <div class="px-4 pb-4 shrink-0 relative">
+    <!-- Pending Attachments Queue (Discord Style) -->
+    {#if pendingAttachments.length > 0}
+      <div class="mb-2 p-3 bg-[#1e1f22] rounded-2xl border border-[#2b2d31] flex flex-wrap gap-2.5 max-h-48 overflow-y-auto shadow-2xl animate-in fade-in slide-in-from-bottom-2 duration-150 custom-scrollbar">
+        {#each pendingAttachments as att (att.id)}
+          <div class="relative flex items-center space-x-2.5 bg-[#111214] border border-[#2b2d31] hover:border-[#383a40] p-2 pr-3 rounded-xl max-w-xs transition-all shadow-md group">
+            <!-- Thumbnail / File Icon -->
+            <div class="relative w-12 h-12 rounded-lg overflow-hidden bg-[#1e1f22] flex items-center justify-center shrink-0 border border-[#2b2d31]">
+              {#if att.isImage && att.previewUrl}
+                <button
+                  type="button"
+                  onclick={() => appState.openImagePreview(att.previewUrl, att.name)}
+                  class="w-full h-full p-0 border-0 bg-transparent cursor-pointer"
+                  title="Clique para ver imagem ampliada"
+                >
+                  <img src={att.previewUrl} alt={att.name} class="w-full h-full object-cover hover:opacity-90 transition-opacity" />
+                </button>
+              {:else if att.name.match(/\.(zip|rar|7z|tar|gz)$/i)}
+                <FileArchive class="w-6 h-6 text-[#f0b232]" />
+              {:else if att.name.match(/\.(mp4|webm|mov|mkv)$/i)}
+                <Film class="w-6 h-6 text-[#eb459e]" />
+              {:else if att.name.match(/\.(mp3|wav|ogg|flac)$/i)}
+                <Music class="w-6 h-6 text-[#5865f2]" />
+              {:else}
+                <FileText class="w-6 h-6 text-[#5865f2]" />
+              {/if}
+
+              <!-- Uploading Spinner Overlay -->
+              {#if att.isUploading}
+                <div class="absolute inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center pointer-events-none">
+                  <Loader2 class="w-5 h-5 text-[#5865f2] animate-spin" />
+                </div>
+              {/if}
+            </div>
+
+            <!-- File Metadata -->
+            <div class="flex-1 min-w-0 pr-3">
+              <div class="text-xs font-bold text-white truncate" title={att.name}>
+                {att.name}
+              </div>
+              <div class="text-[10px] text-[#949ba4] mt-0.5 flex items-center space-x-1.5">
+                <span>{formatFileSize(att.size)}</span>
+                {#if att.isUploading}
+                  <span class="text-[#5865f2] font-semibold flex items-center">
+                    <span class="w-1.5 h-1.5 rounded-full bg-[#5865f2] animate-ping mr-1"></span>
+                    Enviando...
+                  </span>
+                {:else if att.uploadFailed}
+                  <span class="text-[#f23f43] font-semibold">• Erro</span>
+                {:else}
+                  <span class="text-[#23a55a] font-semibold flex items-center">
+                    <Check class="w-3 h-3 mr-0.5 inline" /> Pronto
+                  </span>
+                {/if}
+              </div>
+            </div>
+
+            <!-- Remove Button -->
+            <button
+              type="button"
+              onclick={() => removeAttachment(att.id)}
+              class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-[#1e1f22] border border-[#3f4147] hover:bg-[#f23f43] hover:border-[#f23f43] text-[#dbdee1] hover:text-white flex items-center justify-center transition-all shadow-lg cursor-pointer group-hover:scale-105"
+              title="Remover anexo"
+            >
+              <X class="w-3 h-3" />
+            </button>
+          </div>
+        {/each}
+      </div>
+    {/if}
+
     <!-- Emoji Picker Popover -->
     {#if showEmojiPicker}
       <!-- Backdrop to close -->
@@ -754,25 +925,26 @@
       <input
         bind:this={fileInput}
         type="file"
+        multiple
         class="hidden"
         onchange={handleFileUpload}
       />
       <button
         type="button"
         onclick={() => fileInput?.click()}
-        disabled={isUploading}
-        class="w-6 h-6 rounded-full bg-[#2b2d31] hover:bg-[#dbdee1] text-[#949ba4] hover:text-[#111214] flex items-center justify-center transition-all mr-3 disabled:opacity-50 cursor-pointer shrink-0"
+        class="w-6 h-6 rounded-full bg-[#2b2d31] hover:bg-[#dbdee1] text-[#949ba4] hover:text-[#111214] flex items-center justify-center transition-all mr-3 cursor-pointer shrink-0"
         title="Enviar Foto / Vídeo / Arquivo pela LAN"
       >
         <Plus class="w-4 h-4 font-bold" />
       </button>
 
-      <!-- Message input field -->
+      <!-- Message input field with clipboard paste support -->
       <input
         type="text"
         bind:value={messageInput}
         oninput={handleInput}
         onkeydown={handleKeyDown}
+        onpaste={handlePaste}
         placeholder={`Conversar em #${currentChannel?.name || 'geral'}`}
         class="bg-transparent flex-1 text-white placeholder-[#80848e] text-sm focus:outline-none"
       />
@@ -791,11 +963,15 @@
       <button
         type="button"
         onclick={handleSendMessage}
-        disabled={!messageInput.trim()}
+        disabled={(!messageInput.trim() && pendingAttachments.length === 0) || pendingAttachments.some(a => a.isUploading)}
         class="text-[#b5bac1] hover:text-[#5865f2] p-1.5 rounded-lg hover:bg-[#2b2d31] transition-colors ml-1 disabled:opacity-30 disabled:hover:text-[#b5bac1] cursor-pointer"
         title="Enviar Mensagem (Enter)"
       >
-        <Send class="w-4 h-4" />
+        {#if pendingAttachments.some(a => a.isUploading)}
+          <Loader2 class="w-4 h-4 animate-spin text-[#5865f2]" />
+        {:else}
+          <Send class="w-4 h-4" />
+        {/if}
       </button>
     </div>
   </div>

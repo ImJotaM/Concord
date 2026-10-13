@@ -21,6 +21,7 @@
   import MicPermissionModal from './lib/components/Modals/MicPermissionModal.svelte';
   import ServerRolesModal from './lib/components/Modals/ServerRolesModal.svelte';
   import SoundboardModal from './lib/components/Modals/SoundboardModal.svelte';
+  import ImagePreviewModal from './lib/components/Modals/ImagePreviewModal.svelte';
   import GlobalVoiceAudio from './lib/components/GlobalVoiceAudio.svelte';
   import { soundService } from './lib/services/soundService.svelte';
 
@@ -98,5 +99,10 @@
     <ServerRolesModal />
   {:else if appState.activeModal === 'soundboard'}
     <SoundboardModal />
+  {/if}
+
+  <!-- Fullscreen Image Preview Lightbox -->
+  {#if appState.previewImage}
+    <ImagePreviewModal />
   {/if}
 </main>
